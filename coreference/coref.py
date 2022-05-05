@@ -1,5 +1,8 @@
 # Author: Rehan
 # Run an end-to-end event coreference resolution experiment using the LDC annotations
+import os
+import sys
+sys.path.insert(0, os.getcwd())
 
 from parsing.parse_ldc import extract_mentions
 import argparse
@@ -7,7 +10,6 @@ from collections import defaultdict
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
-import os
 
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
