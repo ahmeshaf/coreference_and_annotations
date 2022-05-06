@@ -147,11 +147,12 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
 
     # get indices
     mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
-    row, col = zip(*mention_ind_pairs)
+    rows, cols = zip(*mention_ind_pairs)
 
     # create similarity matrix from the similarities
     n = len(curr_mentions)
-    similarity_matrix = csr_matrix((similarities, (row, col)), shape=(n, n)).toarray()
+    similarity_matrix = np.identity(n)
+    similarity_matrix[rows, cols] = similarities
 
     # clustering algorithm and mention cluster map
     clusters, labels = connected_components(similarity_matrix)
