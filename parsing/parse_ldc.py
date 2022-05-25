@@ -321,8 +321,11 @@ def extract_mentions(ann_dir, source_dir, working_folder):
         ent_mention_map = pickle.load(open(ent_mention_map_file, 'rb'))
     else:
         # read the annotation files
-        eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "evt")
-        ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "arg")
+        #eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "evt")
+        #ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "arg")
+        eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='evt')
+        ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='arg')
+        
 
         # pickle them
         pickle.dump(eve_mention_map, open(eve_mention_map_file, 'wb'))
