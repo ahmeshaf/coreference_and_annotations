@@ -10,8 +10,6 @@ from collections import defaultdict
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
-from sklearn.cluster import AgglomerativeClustering
-import numpy as np
 
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
@@ -42,27 +40,6 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
         similarities.append(int(men_text1 == men_text2))
 
     return similarities
-
-
-def cluster_agglo(affinity_matrix, threshold=0.5):
-    """
-    Agglomerative clustering based on the affinity matrix
-    :param affinity_matrix: np.array
-        The similarity matrix. Need to convert into distance matrix for agglo clustering algo
-    :param threshold: float
-        Linkage threshold
-    :return: list, np.array
-        The labels of the nodes
-    """
-    clustering_ = AgglomerativeClustering(n_clusters=None,
-                                          affinity='precomputed',
-                                          linkage='average',
-                                          distance_threshold=threshold)
-    # convert affinity into distance
-    distance_matrix = 1 - np.array(affinity_matrix)
-    # fit predict
-    predictions = clustering_.fit_predict(distance_matrix)
-    return predictions
 
 
 def cluster_cc(affinity_matrix, threshold=0.8):

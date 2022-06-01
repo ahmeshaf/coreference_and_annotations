@@ -9,7 +9,9 @@ from collections import OrderedDict, defaultdict
 import glob
 from zipfile import ZipFile
 from bs4 import BeautifulSoup as bs
+import copy
 
+from collections import OrderedDict, defaultdict
 
 def read_csv(file_path: str, delim='\t', return_dict=True):
     """
@@ -273,6 +275,47 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
                                  sent_text[m_end_char - s_start_char:]
     return mention_map
 
+def create_longdocs(doc_sent_map , mention_map):
+    """
+    Create long document version of the mention maps 
+    ----------
+    mention map: python dictionary 
+    doc_sent_map : python dictinary containing raw information about documents 
+     
+
+    Returns
+    -------
+    long doc mention maps with key 'bert_doc'
+    """
+    key = 'sentence_start_char'
+    tmp = doc_sent_map.copy()
+    tmp3 = defaultdict(dict)
+    m_var = mention_map
+    
+    l = []
+    for i, j in m_var.items():
+        if key in j:
+            start_char = j['sentence_start_char']
+            
+            doc_id =  j['doc_id']
+            men_id = j['mention_id']
+            
+            bert_sent = j['bert_sentence']
+    #    
+            tmp2 = copy.deepcopy( doc_sent_map[doc_id])
+            l.append(start_char)
+
+            tmp2[start_char]['sent_text'] = bert_sent
+            bert_doc = ' '.join([y ['sent_text'] for y in tmp2.values() ])
+            
+
+            tmp3[doc_id][men_id] = bert_doc
+            mention_map[men_id]['bert_doc'] = bert_doc
+            
+
+            tmp2[start_char]['sent_text'] = doc_sent_map[doc_id][start_char]['sent_text'] 
+            
+    return mention_map
 
 def extract_mentions(ann_dir, source_dir, working_folder):
     """
@@ -321,8 +364,11 @@ def extract_mentions(ann_dir, source_dir, working_folder):
         ent_mention_map = pickle.load(open(ent_mention_map_file, 'rb'))
     else:
         # read the annotation files
-        eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "evt")
-        ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "arg")
+        #eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "evt")
+        #ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "arg")
+        eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='evt')
+        ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='arg')
+        
 
         # pickle them
         pickle.dump(eve_mention_map, open(eve_mention_map_file, 'wb'))
