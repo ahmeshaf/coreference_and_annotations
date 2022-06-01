@@ -275,47 +275,35 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
                                  sent_text[m_end_char - s_start_char:]
     return mention_map
 
-def create_longdocs(doc_sent_map , mention_map):
+
+def add_bert_docs(mention_map, doc_sent_map):
     """
-    Create long document version of the mention maps 
+    Add the entire document of the mention with the sentence corresponding to the mention
+    replaced by the bert_sentence (sentence in which the mention is surrounded by <m> and </m>)
+    The key for this is 'bert_doc'
+
+    Parameters
     ----------
-    mention map: python dictionary 
-    doc_sent_map : python dictinary containing raw information about documents 
-     
+    mention_map: dict
+    doc_sent_map : dict
 
     Returns
     -------
-    long doc mention maps with key 'bert_doc'
+    None
     """
-    key = 'sentence_start_char'
-    tmp = doc_sent_map.copy()
-    tmp3 = defaultdict(dict)
-    m_var = mention_map
-    
-    l = []
-    for i, j in m_var.items():
-        if key in j:
-            start_char = j['sentence_start_char']
-            
-            doc_id =  j['doc_id']
-            men_id = j['mention_id']
-            
-            bert_sent = j['bert_sentence']
-    #    
-            tmp2 = copy.deepcopy( doc_sent_map[doc_id])
-            l.append(start_char)
+    # for each mention create and add bert_doc
+    for mention in mention_map.values():
+        m_sentence_start_char = mention['sentence_start_char']
+        doc_id = mention['doc_id']
+        # create the copy of doc_id's sent_map
+        m_sent_map = copy.deepcopy(doc_sent_map[doc_id])
+        # replace the sentence associated with the mention with bert_sentence
+        m_sent_map[m_sentence_start_char]['sent_text'] = mention['bert_sentence']
+        # convert sent_map to text
+        bert_doc = '\n'.join([sent_map['sent_text'] for sent_map in m_sent_map.values()])
+        # add bert_doc in mention
+        mention['bert_doc'] = bert_doc
 
-            tmp2[start_char]['sent_text'] = bert_sent
-            bert_doc = ' '.join([y ['sent_text'] for y in tmp2.values() ])
-            
-
-            tmp3[doc_id][men_id] = bert_doc
-            mention_map[men_id]['bert_doc'] = bert_doc
-            
-
-            tmp2[start_char]['sent_text'] = doc_sent_map[doc_id][start_char]['sent_text'] 
-            
-    return mention_map
 
 def extract_mentions(ann_dir, source_dir, working_folder):
     """
@@ -364,11 +352,8 @@ def extract_mentions(ann_dir, source_dir, working_folder):
         ent_mention_map = pickle.load(open(ent_mention_map_file, 'rb'))
     else:
         # read the annotation files
-        #eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "evt")
-        #ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "arg")
         eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='evt')
         ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='arg')
-        
 
         # pickle them
         pickle.dump(eve_mention_map, open(eve_mention_map_file, 'wb'))
