@@ -12,6 +12,10 @@ from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
+import spacy
+
+
+nlp = spacy.load('en_core_web_sm')
 
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
@@ -39,7 +43,15 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
         men_map2 = mention_map[men2]
         men_text1 = men_map1['mention_text']
         men_text2 = men_map2['mention_text']
-        similarities.append(int(men_text1 == men_text2))
+        lemma1 = men_map1['lemma']
+        lemma2 = men_map2['lemma']
+
+        fnames1 = men_map1['frames']
+        fnames2 = men_map2['frames']
+
+        same_frame = float(len(fnames1.intersection(fnames2)) > 0)
+
+        similarities.append(int(lemma1 in men_text2 or lemma2 in men_text1 or same_frame))
 
     return similarities
 

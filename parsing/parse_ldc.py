@@ -8,7 +8,10 @@ import pandas as pd
 from collections import OrderedDict, defaultdict
 import glob
 from zipfile import ZipFile
+
+import spacy
 from bs4 import BeautifulSoup as bs
+from parsing.utils import add_lexical_features
 
 
 def read_csv(file_path: str, delim='\t', return_dict=True):
@@ -315,6 +318,10 @@ def extract_mentions(ann_dir, source_dir, working_folder):
     # generate mention maps
     eve_mention_map_file = working_folder + '/evt_mention_map.pkl'
     ent_mention_map_file = working_folder + '/ent_mention_map.pkl'
+
+    # spacy model
+    nlp = spacy.load('en_core_web_sm')
+
     if os.path.exists(eve_mention_map_file) and os.path.exists(ent_mention_map_file):
         # if files already there, just load the pickles
         eve_mention_map = pickle.load(open(eve_mention_map_file, 'rb'))
@@ -327,6 +334,10 @@ def extract_mentions(ann_dir, source_dir, working_folder):
         # pickle them
         pickle.dump(eve_mention_map, open(eve_mention_map_file, 'wb'))
         pickle.dump(ent_mention_map, open(ent_mention_map_file, 'wb'))
+
+    # add lexical features
+    add_lexical_features(nlp, eve_mention_map)
+    add_lexical_features(nlp, ent_mention_map)
 
     # stores the event and entity relations
     relations = []
