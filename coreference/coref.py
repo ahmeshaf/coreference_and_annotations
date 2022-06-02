@@ -1,6 +1,7 @@
 # Author: Rehan
 # Run an end-to-end event coreference resolution experiment using the LDC annotations
 import os
+import pickle
 import sys
 sys.path.insert(0, os.getcwd())
 
@@ -10,6 +11,56 @@ from collections import defaultdict
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
+import numpy as np
+
+
+def get_cosine_similarities(mention_pairs, vector_map):
+    """
+    Calculate the cosine similarity as row wise dot product of 2 arrays of vectors
+
+    Parameters
+    ----------
+    mention_pairs: list
+    vector_map: dict
+
+    Returns
+    -------
+    list
+    """
+    def normed(a):
+        return a/np.linalg.norm(a, axis=1).reshape((-1, 1))
+    m1s, m2s = zip(*mention_pairs)
+    lhs = np.array([vector_map[m] for m in m1s])
+    rhs = np.array([vector_map[m] for m in m2s])
+
+    return np.sum(normed(lhs) * normed(rhs), axis=1)
+
+
+def get_mention_pair_similarity_cdlm_bi(mention_pairs, mention_map, relations, working_folder):
+    """
+    Generate similarity using CDLM as a bi-encoder, i.e., generate mention embeddings and calculate
+    cosine similarity between the mention_pairs
+
+    Parameters
+    ----------
+    mention_pairs: list
+    mention_map: list
+    relations: list
+    working_folder: str
+
+    Returns
+    -------
+    list
+    """
+    # get the CDLM embeddings for the mentions
+    vec_map_path = working_folder + '/cdlm_vec_map.pkl'
+    # # if the vector map pickle file does not exist, generate the embeddings
+    if not os.path.exists(vec_map_path):
+        generate_cdlm_embeddings(mention_map, vec_map_path)
+    # # read the vector_map pickle
+    cdlm_vec_map = pickle.load(open(vec_map_path, 'rb'))
+    # # generate and return the cosine similarities
+    return get_cosine_similarities(mention_pairs, cdlm_vec_map)
 
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
