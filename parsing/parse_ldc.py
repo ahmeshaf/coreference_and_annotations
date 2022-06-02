@@ -10,8 +10,8 @@ import glob
 from zipfile import ZipFile
 from bs4 import BeautifulSoup as bs
 import copy
-
 from collections import OrderedDict, defaultdict
+
 
 def read_csv(file_path: str, delim='\t', return_dict=True):
     """
