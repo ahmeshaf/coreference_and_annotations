@@ -49,7 +49,7 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
         fnames1 = men_map1['frames']
         fnames2 = men_map2['frames']
 
-        same_frame = float(len(fnames1.intersection(fnames2)) > 0)
+        same_frame = len(fnames1.intersection(fnames2)) > 0
 
         similarities.append(int(lemma1 in men_text2 or lemma2 in men_text1 or same_frame))
 
@@ -158,13 +158,14 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
     similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
 
     # get indices
-    mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
+    mention_ind_pairs = [(curr_men_to_ind[m1], curr_men_to_ind[m2]) for m1, m2 in mention_pairs]
     rows, cols = zip(*mention_ind_pairs)
 
     # create similarity matrix from the similarities
     n = len(curr_mentions)
     similarity_matrix = np.identity(n)
     similarity_matrix[rows, cols] = similarities
+    similarity_matrix[cols, rows] = similarities
 
     # clustering algorithm and mention cluster map
     clusters, labels = connected_components(similarity_matrix)

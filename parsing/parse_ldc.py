@@ -274,6 +274,12 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
             m['bert_sentence'] = sent_text[: m_start_char - s_start_char] + ' <m> ' + \
                                  m['mention_text'] + ' </m> ' + \
                                  sent_text[m_end_char - s_start_char:]
+
+    # spacy model
+    nlp = spacy.load('en_core_web_sm')
+    # add lexical features
+    add_lexical_features(nlp, mention_map)
+
     return mention_map
 
 
@@ -319,9 +325,6 @@ def extract_mentions(ann_dir, source_dir, working_folder):
     eve_mention_map_file = working_folder + '/evt_mention_map.pkl'
     ent_mention_map_file = working_folder + '/ent_mention_map.pkl'
 
-    # spacy model
-    nlp = spacy.load('en_core_web_sm')
-
     if os.path.exists(eve_mention_map_file) and os.path.exists(ent_mention_map_file):
         # if files already there, just load the pickles
         eve_mention_map = pickle.load(open(eve_mention_map_file, 'rb'))
@@ -334,10 +337,6 @@ def extract_mentions(ann_dir, source_dir, working_folder):
         # pickle them
         pickle.dump(eve_mention_map, open(eve_mention_map_file, 'wb'))
         pickle.dump(ent_mention_map, open(ent_mention_map_file, 'wb'))
-
-    # add lexical features
-    add_lexical_features(nlp, eve_mention_map)
-    add_lexical_features(nlp, ent_mention_map)
 
     # stores the event and entity relations
     relations = []
