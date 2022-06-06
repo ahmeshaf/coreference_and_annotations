@@ -4,9 +4,13 @@ import os
 import pickle
 import sys
 sys.path.insert(0, os.getcwd())
-
+#sys.path.append('.')
+sys.path.append("/s/chopin/d/proj/ramfis-aida//coref/coreference_and_annotations/")
 from parsing.parse_ldc import extract_mentions
+import pyhocon
+from bert_stuff_new import *
 import argparse
+
 from collections import defaultdict
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
@@ -30,8 +34,8 @@ def get_cosine_similarities(mention_pairs, vector_map):
     def normed(a):
         return a/np.linalg.norm(a, axis=1).reshape((-1, 1))
     m1s, m2s = zip(*mention_pairs)
-    lhs = np.array([vector_map[m] for m in m1s])
-    rhs = np.array([vector_map[m] for m in m2s])
+    lhs = np.array([vector_map[m].detach().cpu().numpy() for m in m1s])
+    rhs = np.array([vector_map[m].detach().cpu().numpy() for m in m2s])
 
     return np.sum(normed(lhs) * normed(rhs), axis=1)
 
@@ -56,7 +60,10 @@ def get_mention_pair_similarity_cdlm_bi(mention_pairs, mention_map, relations, w
     vec_map_path = working_folder + '/cdlm_vec_map.pkl'
     # # if the vector map pickle file does not exist, generate the embeddings
     if not os.path.exists(vec_map_path):
-        generate_cdlm_embeddings(mention_map, vec_map_path)
+        #generate_cdlm_embeddings(mention_map, vec_map_path)
+        
+        # use the appropriate key name i.e bert_doc for longer documents and bert_sentence for sentences 
+        generate_cdlm_embeddings(mention_map, vec_map_path , key_name ='bert_doc', num_gpus=4, batch_size=20, cpu=False)
     # # read the vector_map pickle
     cdlm_vec_map = pickle.load(open(vec_map_path, 'rb'))
     # # generate and return the cosine similarities
@@ -166,6 +173,7 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
 
     # create a single dict for all mentions
     all_mention_map = {**eve_mention_map, **ent_mention_map}
+    len(all_mention_map)
 
     # sort event mentions and make men to ind map
     curr_mentions = sorted(list(curr_mention_map.keys()), key=lambda x: curr_mention_map[x]['m_id'])
@@ -190,8 +198,10 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
             for j in range(i):
                 mention_pairs.append((list_mentions[i], list_mentions[j]))
 
-    # get the similarities of the mention-pairs
-    similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
+    # get the similarities of the mention-pairs from either lemmas or cdlm embeddings 
+    
+    #similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
+    similarities = get_mention_pair_similarity_cdlm_bi(mention_pairs, all_mention_map, relations, working_folder)
 
     # get indices
     mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
