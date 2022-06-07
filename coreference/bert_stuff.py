@@ -9,9 +9,6 @@ import torch.nn.functional as F
 from models import *
 import torch
 from tqdm import tqdm
-config_file_path = '../cdlm/config_pairwise_long_reg_span.json'
-config = pyhocon.ConfigFactory.parse_file(config_file_path)
-
 
 def generate_cdlm_embeddings_from_model(parallel_model,bert_sentences, device, batch_size=150):
     """
@@ -32,9 +29,8 @@ def generate_cdlm_embeddings_from_model(parallel_model,bert_sentences, device, b
 
     # Store vectors here
     all_vectors = []
-    
-    #vector_map_path = working_folder + f'/{men_type}_vectormaps.pkl'
-
+     
+    # append indices of the special tokens around the mentions to this list to find overflowing tokens(that exceed 4096 token length )
     loc_mentions = []
     
     #create batches of sentences or documents and get them tokenized
@@ -56,6 +52,8 @@ def generate_cdlm_embeddings_from_model(parallel_model,bert_sentences, device, b
 
     #get the overflowing token indices and chunk the document so that the special tokens are 
     #within max token length(4096) for the CDLM model
+    
+    
     overflow_idx=[]
   
     for i,j in enumerate(loc_mentions):
@@ -73,13 +71,16 @@ def generate_cdlm_embeddings_from_model(parallel_model,bert_sentences, device, b
     m_new_tensor = F.pad(m_new_tensor,pad =(0, m.shape[1]-m_new_tensor.shape[1]), value=1) 
 
     m[idx] = m_new_tensor
+    
+    #get non zero indices for the new tensor 'm' created with mentions within 4096 tokens for entire tensor
 
     k = m == parallel_model.module.vals[0]
     p = m == parallel_model.module.vals[1]
 
     v = (k.int() + p.int()).bool()
     nz_indexes = v.nonzero()[:, 1].reshape(m.shape[0], 2)
-
+    
+    #create dummy tensor to get indices for the binary map creation 
     q = torch.arange(m.shape[1])
     q = q.repeat(m.shape[0], 1)
     
@@ -94,8 +95,9 @@ def generate_cdlm_embeddings_from_model(parallel_model,bert_sentences, device, b
     # get the tokens within 4096 after chunking 
     input_ids = input_ids[:, :4096]
     
-    attention_mask[:, 0] = 2
-    attention_mask[attention_mask_g == 1] = 2
+    attention_mask[:, 0] = 1 # 1 because we are letting this token to be attended globally, not 2 because longformer issue resolved https://github.com/huggingface/transformers/issues/7015
+    
+    attention_mask[attention_mask_g == 1] = 1 #same as above for the special mention tokens to be attended globally
     attention_mask = attention_mask[:, :4096]
     arg1 = msk_0_ar.int() * msk_1_ar.int()
     arg1 = arg1[:, :4096]
@@ -162,12 +164,3 @@ def generate_cdlm_embeddings(mention_map, vec_map_path , key_name ='bert_doc', n
     all_vectors = generate_cdlm_embeddings_from_model(parallel_model,bert_sentences, device, batch_size)
     vec_map = {men_id:vec for men_id, vec in zip(men_ids, all_vectors)}
     pickle.dump(vec_map, open(vec_map_path, 'wb'))
-    
-                                 
-    
-
-
-
-
-
-
