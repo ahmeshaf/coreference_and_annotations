@@ -13,9 +13,7 @@ from evaluations.eval import *
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 import spacy
-from collections import namedtuple
 
-# WithinDocEvent = namedtuple("WithinDocEvent", ["mentions", "topic", "doc_id"])
 nlp = spacy.load('en_core_web_sm')
 
 
@@ -166,9 +164,8 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
     for mentions in topic_mention_dict.values():
         list_mentions = list(mentions)
         for i in range(len(list_mentions)):
-            for j in range(i+1):
-                if i != j:
-                    mention_pairs.append((list_mentions[i], list_mentions[j]))
+            for j in range(i):
+                mention_pairs.append((list_mentions[i], list_mentions[j]))
 
     # Generate pair-wise similarity matrix between the mentions of the same topic:
     # TODO: can be made into a func:
