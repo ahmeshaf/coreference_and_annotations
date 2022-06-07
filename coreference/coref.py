@@ -4,8 +4,6 @@ import os
 import pickle
 import sys
 sys.path.insert(0, os.getcwd())
-#sys.path.append('.')
-sys.path.append("/s/chopin/d/proj/ramfis-aida//coref/coreference_and_annotations/")
 from parsing.parse_ldc import extract_mentions
 import pyhocon
 from bert_stuff_new import *
@@ -60,8 +58,7 @@ def get_mention_pair_similarity_cdlm_bi(mention_pairs, mention_map, relations, w
     vec_map_path = working_folder + '/cdlm_vec_map.pkl'
     # # if the vector map pickle file does not exist, generate the embeddings
     if not os.path.exists(vec_map_path):
-        #generate_cdlm_embeddings(mention_map, vec_map_path)
-        
+       
         # use the appropriate key name i.e bert_doc for longer documents and bert_sentence for sentences 
         generate_cdlm_embeddings(mention_map, vec_map_path , key_name ='bert_doc', num_gpus=4, batch_size=20, cpu=False)
     # # read the vector_map pickle
@@ -173,8 +170,7 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
 
     # create a single dict for all mentions
     all_mention_map = {**eve_mention_map, **ent_mention_map}
-    len(all_mention_map)
-
+    
     # sort event mentions and make men to ind map
     curr_mentions = sorted(list(curr_mention_map.keys()), key=lambda x: curr_mention_map[x]['m_id'])
     curr_men_to_ind = {eve: i for i, eve in enumerate(curr_mentions)}
