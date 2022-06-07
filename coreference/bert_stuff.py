@@ -110,7 +110,6 @@ def generate_cdlm_embeddings_from_model(parallel_model,bert_sentences, device, b
     
     return all_vectors
 
-
 def generate_cdlm_embeddings(mention_map, vec_map_path , key_name ='bert_doc', num_gpus=4, batch_size=150, cpu=False):
     """
     Generate cdlm embeddings of the mentions in the cdlm format
@@ -142,7 +141,6 @@ def generate_cdlm_embeddings(mention_map, vec_map_path , key_name ='bert_doc', n
         list of tensors, ie, the representations of the mentions
     """
     
-   
     men_ids, bert_sentences = zip(*[(men_id, men[key_name]) for men_id, men in mention_map.items()])
     config_file_path = '../cdlm/config_pairwise_long_reg_span.json'
     config = pyhocon.ConfigFactory.parse_file(config_file_path)
