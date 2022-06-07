@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, os.getcwd())
 from parsing.parse_ldc import extract_mentions
 import pyhocon
-from bert_stuff_new import *
+from bert_stuff import *
 import argparse
 
 from collections import defaultdict
