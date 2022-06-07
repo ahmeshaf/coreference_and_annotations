@@ -157,9 +157,6 @@ def generate_cdlm_embeddings(mention_map, vec_map_path , key_name ='bert_doc', n
     parallel_model = torch.nn.DataParallel(cross_encoder, device_ids=device_ids)
     parallel_model.module.to(device)
    
-    if cpu:
-        parallel_model.module.to(device)
-        
     #get all the vectors along with their mention IDs and pickle them 
     all_vectors = generate_cdlm_embeddings_from_model(parallel_model,bert_sentences, device, batch_size)
     vec_map = {men_id:vec for men_id, vec in zip(men_ids, all_vectors)}
