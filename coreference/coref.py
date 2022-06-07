@@ -65,7 +65,7 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
 
         same_frame = len(fnames1.intersection(fnames2)) > 0
 
-        similarities.append(int(lemma1 in men_text2 or lemma2 in men_text1 or same_frame))
+        similarities.append(int(lemma1 in men_text2 or lemma2 in men_text1))
 
     return similarities
 
@@ -191,7 +191,7 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
                                                  relations, similarity_matrix, curr_men_to_ind)
 
     # clustering algorithm and mention cluster map
-    clusters, labels = connected_components(similarity_matrix)
+    # clusters, labels = connected_components(similarity_matrix)
     system_mention_cluster_map = [(men, clus) for men, clus in zip(curr_mentions, labels)]
 
     # generate system key file
@@ -224,7 +224,7 @@ def cross_document_clustering(mentions, within_doc_clusters, all_mention_map,
     for cluster in within_doc_clusters:
         cluster_by_topic[cluster.topic].append(cluster)
 
-    # clustering by topic
+    # clustering clusters by topic
     mention_cluster_map = {}
     for topic, clusters in cluster_by_topic.items():
         cluster_sim_matrix = np.identity(len(clusters))
@@ -234,10 +234,20 @@ def cross_document_clustering(mentions, within_doc_clusters, all_mention_map,
                 men_ids_2 = [curr_men_to_ind[m['mention_id']] for m in cluster_2.mention_dicts]
                 max_sim = max([similarity_matrix[m1, m2] for m1, m2 in zip(men_ids_1, men_ids_2)])
                 cluster_sim_matrix[i, j] = max_sim
+        _, labels = cluster_cc(cluster_sim_matrix)
+        for cluster, label in zip(clusters, labels):
+            for mention in cluster.mention_dicts:
+                mention_cluster_map[curr_men_to_ind[mention['mention_id']]] = topic + '_' + str(label)
 
+    # create an ordered list of labels for mentions
+    labels = [mention_cluster_map[men] for men in mentions]
 
+    # clusters by labels
+    mention_by_labels = defaultdict(list)
+    for mention, label in mention_cluster_map.items():
+        mention_by_labels[label].append(mention)
 
-    return None, None
+    return list(mention_by_labels.values()), labels
 
 
 if __name__ == '__main__':
