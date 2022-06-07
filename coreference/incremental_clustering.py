@@ -118,5 +118,32 @@ class IncrementalClusterer():
 
         return possible_clus
 
-    def run_clustering_on(self, events, eve_mention_map, simulation=True):
-        random.shuffle(events)
+    def run_clustering_on(self, mentions, all_mention_map, working_folder, run_within_doc=True, simulation=True):
+        """
+        Run clustering algorithm:
+            1. Group mentions by docs
+            2. Run Within-doc clustering of mentions for each doc and create mention clusters
+            3. Group mentions clusters by topic
+            3. Run Cross-doc clustering
+        Parameters
+        ----------
+        mentions: list
+        all_mention_map: dict
+        working_folder: str
+        run_within_doc: bool
+        simulation: bool
+
+        Returns
+        -------
+        None
+        """
+        # 1. Group mentions by docs
+        mentions_by_doc = defaultdict(list)
+        for mention in mentions:
+            mentions_by_doc[all_mention_map[mention]['doc_id']].append(mention)
+
+        # 2. Run within-doc clustering
+        if run_within_doc or ('within_doc_cluster' not in all_mention_map[mentions[0]]):
+            add_within_doc_clusters(mentions_by_doc, all_mention_map, working_folder, simulation)
+
+

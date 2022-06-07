@@ -13,9 +13,25 @@ from evaluations.eval import *
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 import spacy
+from collections import namedtuple
 
-
+# WithinDocEvent = namedtuple("WithinDocEvent", ["mentions", "topic", "doc_id"])
 nlp = spacy.load('en_core_web_sm')
+
+
+class Cluster:
+    def __init__(self, mention_dicts):
+        self.mention_dicts = mention_dicts
+        self.doc_ids = set([m['doc_id'] for m in mention_dicts])
+        self.topic = mention_dicts[0]['topic']
+        self.id_ = id(self)
+
+    def merge_cluster(self, event):
+        self.mention_dicts.extend(event.mention_dicts)
+        self.doc_ids.update(event.doc_ids)
+
+    def from_same_doc(self, event):
+        return len(self.doc_ids.intersection(event.doc_ids)) > 0
 
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
@@ -154,18 +170,28 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
                 if i != j:
                     mention_pairs.append((list_mentions[i], list_mentions[j]))
 
-    # get the similarities of the mention-pairs
-    similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
+    # Generate pair-wise similarity matrix between the mentions of the same topic:
+    # TODO: can be made into a func:
+    #  generate_pair_wise_sim(mention_pairs, men2ind, mention_map, relations, working_folder)
 
-    # get indices
+    ## get the similarities of the mention-pairs
+    similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
+    ## get indices
     mention_ind_pairs = [(curr_men_to_ind[m1], curr_men_to_ind[m2]) for m1, m2 in mention_pairs]
     rows, cols = zip(*mention_ind_pairs)
-
-    # create similarity matrix from the similarities
+    ## create similarity matrix from the similarities
     n = len(curr_mentions)
     similarity_matrix = np.identity(n)
     similarity_matrix[rows, cols] = similarities
     similarity_matrix[cols, rows] = similarities
+
+    # get within-doc mention clusters as {within_doc_cluster: [mention]}
+    # TODO: do within-doc clustering
+    within_doc_clusters = [Cluster([all_mention_map[mention]]) for mention in curr_mentions]
+
+    # get cross-doc mention clusters.
+    clusters, labels = cross_document_clustering(curr_mentions, within_doc_clusters, all_mention_map,
+                                                 relations, similarity_matrix, curr_men_to_ind)
 
     # clustering algorithm and mention cluster map
     clusters, labels = connected_components(similarity_matrix)
@@ -177,6 +203,44 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
 
     # evaluate
     generate_results(gold_key_file, system_key_file)
+
+
+def cross_document_clustering(mentions, within_doc_clusters, all_mention_map,
+                              relations, similarity_matrix, curr_men_to_ind):
+    """
+
+    Parameters
+    ----------
+    mentions: list
+    within_doc_clusters: list of Cluster
+    all_mention_map: dict
+    relations: list
+    similarity_matrix: np.array
+    curr_men_to_ind: dict
+
+    Returns
+    -------
+    list, list
+    """
+    # group clusters by topic
+    cluster_by_topic = defaultdict(list)
+    for cluster in within_doc_clusters:
+        cluster_by_topic[cluster.topic].append(cluster)
+
+    # clustering by topic
+    mention_cluster_map = {}
+    for topic, clusters in cluster_by_topic.items():
+        cluster_sim_matrix = np.identity(len(clusters))
+        for i, cluster_1 in enumerate(clusters):
+            men_ids_1 = [curr_men_to_ind[m['mention_id']] for m in cluster_1.mention_dicts]
+            for j, cluster_2 in enumerate(clusters):
+                men_ids_2 = [curr_men_to_ind[m['mention_id']] for m in cluster_2.mention_dicts]
+                max_sim = max([similarity_matrix[m1, m2] for m1, m2 in zip(men_ids_1, men_ids_2)])
+                cluster_sim_matrix[i, j] = max_sim
+
+
+
+    return None, None
 
 
 if __name__ == '__main__':
