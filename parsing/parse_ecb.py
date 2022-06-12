@@ -4,64 +4,14 @@ import pickle
 from collections import defaultdict, OrderedDict
 import zipfile
 import glob
+from nltk.corpus import framenet15 as fn
+import spacy
 from bs4 import BeautifulSoup
 from copy import deepcopy
 
 VALIDATION = ['2', '5', '12', '18', '21', '23', '34', '35']
 TRAIN = [str(i) for i in range(1, 36) if str(i) not in VALIDATION]
 TEST = [str(i) for i in range(36, 46)]
-
-
-def get_sent_map(doc_bs):
-    """
-
-    Parameters
-    ----------
-    doc_bs: BeautifulSoup
-
-    Returns
-    -------
-    dict, dict
-    """
-    sent_map = OrderedDict()
-
-    # get all tokens
-    tokens = doc_bs.find_all('token')
-
-    # initialize sentence number, start_char, end_char
-    sent_num = tokens[0]['sentence']
-    start_char, end_char, sent_start_char = 0, 0, 0
-
-    # all tokens map
-    all_token_map = OrderedDict()
-
-    for token in tokens:
-        all_token_map[token['t_id']] = {
-            'start_char': start_char,
-            'end_char': start_char + len(token.text) - 1,
-            'text': token.text
-        }
-
-        # if new sentence
-        if token['sentence'] != sent_num:
-            sent_map[sent_start_char]['sent_text'] = ' '.join(t for
-                                                              t in sent_map[sent_start_char]['token_map'].values())
-            sent_map[sent_start_char]['end_char'] = sent_start_char + len(sent_map[sent_start_char]['sent_text']) - 1
-            sent_start_char = start_char
-
-        if sent_start_char not in sent_map:
-            sent_map[sent_start_char] = {
-                'sent_id': token['sentence'],
-                'start_char': sent_start_char,
-                'token_map': OrderedDict()
-            }
-
-        sent_map[sent_start_char]['token_map'][start_char] = token.text
-
-        start_char += len(token.text) + 1
-        sent_num = token['sentence']
-
-    return all_token_map, sent_map
 
 
 def get_sent_map_simple(doc_bs):
@@ -225,15 +175,40 @@ def parse_annotations(annotation_folder, output_folder):
             mention['tag_descriptor'] = tag_descriptor
 
             # add into mention map
-            mention_map['m_id'] = mention
+            mention_map[m_id] = mention
 
     # lexical features
-    add_lexical_features(mention_map)
+    nlp = spacy.load('en_core_web_sm')
+    add_lexical_features(nlp, mention_map)
 
     # save pickle
     pickle.dump(mention_map, open(output_folder + '/mention_map.pkl', 'wb'))
 
     return mention_map
+
+
+def add_lexical_features(nlp, mention_map):
+    """
+    Add lemma, derivational verb, etc
+    Parameters
+    ----------
+    nlp: spacy.tokens.Language
+    mention_map: dict
+
+    Returns
+    -------
+    None
+    """
+    for men_id, mention in mention_map.items():
+        # parse spacy over mention_text
+        mention_nlp = nlp(mention['mention_text'])
+
+        # get lemma
+        mention['lemma'] = mention_nlp[:].root.lemma_
+
+        # get framenet frames
+        frames = set([f.name for f in fn.frames_by_lemma(mention['lemma'])])
+        mention['frames'] = frames
 
 
 if __name__ == '__main__':
