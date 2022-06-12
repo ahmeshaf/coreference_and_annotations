@@ -1,5 +1,6 @@
 # author: Rehan
 import os
+import pickle
 from collections import defaultdict, OrderedDict
 import zipfile
 import glob
@@ -129,7 +130,7 @@ def parse_annotations(annotation_folder, output_folder):
     #     zip_f.extractall(output_folder)
 
     # read annotations files at working_folder/ECB+
-    ecb_plus_folder = os.path.join(working_folder, 'ECB+/')
+    ecb_plus_folder = os.path.join(output_folder, 'ECB+/')
     doc_sent_map = {}
     mention_map = {}
     singleton_idx = 10000000000
@@ -219,7 +220,17 @@ def parse_annotations(annotation_folder, output_folder):
                 tag_descriptor = 'singleton'
             mention['cluster_id'] = cluster_id
             mention['tag_descriptor'] = tag_descriptor
+
+            # add into mention map
             mention_map['m_id'] = mention
+
+    # lexical features
+    add_lexical_features(mention_map)
+
+    # save pickle
+    pickle.dump(mention_map, open(output_folder + '/mention_map.pkl', 'wb'))
+
+    return mention_map
 
 
 if __name__ == '__main__':
