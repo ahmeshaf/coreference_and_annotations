@@ -126,8 +126,8 @@ def parse_annotations(annotation_folder, output_folder):
             topic_sentence_map[topic][doc_name].append(sentence)
 
     # unzip ECB+.zip
-    # with zipfile.ZipFile(os.path.join(annotation_folder, 'ECB+.zip'), 'r') as zip_f:
-    #     zip_f.extractall(output_folder)
+    with zipfile.ZipFile(os.path.join(annotation_folder, 'ECB+.zip'), 'r') as zip_f:
+        zip_f.extractall(output_folder)
 
     # read annotations files at working_folder/ECB+
     ecb_plus_folder = os.path.join(output_folder, 'ECB+/')
@@ -176,6 +176,9 @@ def parse_annotations(annotation_folder, output_folder):
                 split = 'test'
 
             mention_tokens = [curr_tok_map[m['t_id']] for m in mark.find_all('token_anchor')]
+            if '36_4ecbplus.xml' in doc_name and mention_tokens[-1]['t_id'] == '127':
+                mention_tokens = mention_tokens[-1:]
+
             sent_id = mention_tokens[0]['sentence']
             mention = {
                 'm_id': m_id,
