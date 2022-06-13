@@ -66,14 +66,14 @@ def parse_annotations(annotation_folder, output_folder):
     """
     # get validated sentences as a map {topic: {doc_name: [sentences]}}
     valid_sentences_path = os.path.join(annotation_folder, 'ECBplus_coreference_sentences.csv')
-    topic_sentence_map = defaultdict(dict)
+    valid_topic_sentence_map = defaultdict(dict)
     with open(valid_sentences_path) as vf:
         rows = [line.strip().split(',') for line in vf.readlines()][1:]
         for topic, doc, sentence in rows:
             doc_name = topic + '_' + doc + '.xml'
-            if doc_name not in topic_sentence_map[topic]:
-                topic_sentence_map[topic][doc_name] = []
-            topic_sentence_map[topic][doc_name].append(sentence)
+            if doc_name not in valid_topic_sentence_map[topic]:
+                valid_topic_sentence_map[topic][doc_name] = set()
+            valid_topic_sentence_map[topic][doc_name].add(sentence)
 
     # unzip ECB+.zip
     with zipfile.ZipFile(os.path.join(annotation_folder, 'ECB+.zip'), 'r') as zip_f:
@@ -130,6 +130,9 @@ def parse_annotations(annotation_folder, output_folder):
                 mention_tokens = mention_tokens[-1:]
 
             sent_id = mention_tokens[0]['sentence']
+            if doc_name not in valid_topic_sentence_map[topic] or \
+                    sent_id not in valid_topic_sentence_map[topic][doc_name]:
+                continue
             mention = {
                 'm_id': m_id,
                 'sentence_id':  sent_id,
@@ -171,11 +174,11 @@ def parse_annotations(annotation_folder, output_folder):
                 cluster_id = singleton_idx
                 singleton_idx += 1
                 tag_descriptor = 'singleton'
-            mention['cluster_id'] = cluster_id
+            mention['gold_cluster'] = cluster_id
             mention['tag_descriptor'] = tag_descriptor
 
             # add into mention map
-            mention_map[m_id] = mention
+            mention_map[doc_name + '_' + m_id] = mention
 
     # lexical features
     nlp = spacy.load('en_core_web_sm')
@@ -203,8 +206,16 @@ def add_lexical_features(nlp, mention_map):
         # parse spacy over mention_text
         mention_nlp = nlp(mention['mention_text'])
 
+        mention_nlp_no_sw = nlp(' '.join([w.text for w in mention_nlp if not w.is_stop]))
+
+        # if mention is a stop word
+        if mention_nlp_no_sw.text == '':
+            mention['lemma'] = ""
+            mention['frames'] = set()
+            continue
+
         # get lemma
-        mention['lemma'] = mention_nlp[:].root.lemma_
+        mention['lemma'] = mention_nlp_no_sw[:].root.lemma_
 
         # get framenet frames
         frames = set([f.name for f in fn.frames_by_lemma(mention['lemma'])])
