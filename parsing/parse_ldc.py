@@ -10,11 +10,9 @@ import glob
 from zipfile import ZipFile
 from bs4 import BeautifulSoup as bs
 import copy
-<<<<<<< HEAD
-from collections import OrderedDict, defaultdict
-=======
 
->>>>>>> 2190a3f0d1729befef2168cc752d48f3bd922659
+from collections import OrderedDict, defaultdict
+
 
 
 def read_csv(file_path: str, delim='\t', return_dict=True):
