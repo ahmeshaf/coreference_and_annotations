@@ -5,7 +5,6 @@ import pickle
 import sys
 sys.path.insert(0, os.getcwd())
 from parsing.parse_ldc import extract_mentions
-import pyhocon
 from bert_stuff import *
 import argparse
 
@@ -14,7 +13,6 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
 import numpy as np
-
 
 
 def get_cosine_similarities(mention_pairs, vector_map):
@@ -59,14 +57,12 @@ def get_mention_pair_similarity_cdlm_bi(mention_pairs, mention_map, relations, w
     vec_map_path = working_folder + '/cdlm_vec_map.pkl'
     # # if the vector map pickle file does not exist, generate the embeddings
     if not os.path.exists(vec_map_path):
-       
-        # use the appropriate key name i.e bert_doc for longer documents and bert_sentence for sentences 
-        generate_cdlm_embeddings(mention_map, vec_map_path , key_name ='bert_doc', num_gpus=4, batch_size=20, cpu=False)
+        # use the appropriate key name i.e. bert_doc for longer documents and bert_sentence for sentences
+        generate_cdlm_embeddings(mention_map, vec_map_path, key_name='bert_doc', num_gpus=4, batch_size=20, cpu=False)
     # # read the vector_map pickle
     cdlm_vec_map = pickle.load(open(vec_map_path, 'rb'))
     # # generate and return the cosine similarities
     return get_cosine_similarities(mention_pairs, cdlm_vec_map)
-
 
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
@@ -137,7 +133,8 @@ def cluster_cc(affinity_matrix, threshold=0.8):
     return clusters, labels
 
 
-def coreference(curr_mention_map, all_mention_map, working_folder, men_type='evt', relations=None, sim_type ='lemma'):
+def coreference(curr_mention_map, all_mention_map, working_folder,
+                men_type='evt', relations=None, sim_type='lemma'):
     """
 
     Parameters
@@ -146,6 +143,7 @@ def coreference(curr_mention_map, all_mention_map, working_folder, men_type='evt
     all_mention_map
     working_folder
     men_type
+    sim_type
     relations
 
     Returns
@@ -182,7 +180,6 @@ def coreference(curr_mention_map, all_mention_map, working_folder, men_type='evt
         similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
     elif sim_type == 'cdlm':
         similarities = get_mention_pair_similarity_cdlm_bi(mention_pairs, all_mention_map, relations, working_folder)
- 
 
     # get indices
     mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
@@ -241,7 +238,7 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
     # create a single dict for all mentions
     all_mention_map = {**eve_mention_map, **ent_mention_map}
 
-    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations, sim_type ='cdlm')
+    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations, sim_type='cdlm')
 
 
 if __name__ == '__main__':
