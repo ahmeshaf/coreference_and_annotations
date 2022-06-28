@@ -3,7 +3,6 @@
 import os
 import pickle
 import sys
-
 sys.path.insert(0, os.getcwd())
 from parsing.parse_ldc import extract_mentions
 from bert_stuff import *
@@ -29,10 +28,8 @@ def get_cosine_similarities(mention_pairs, vector_map):
     -------
     list
     """
-
     def normed(a):
-        return a / np.linalg.norm(a, axis=1).reshape((-1, 1))
-
+        return a/np.linalg.norm(a, axis=1).reshape((-1, 1))
     m1s, m2s = zip(*mention_pairs)
     lhs = np.array([vector_map[m].detach().cpu().numpy() for m in m1s])
     rhs = np.array([vector_map[m].detach().cpu().numpy() for m in m2s])

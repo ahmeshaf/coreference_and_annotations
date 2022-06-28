@@ -13,6 +13,8 @@ from bs4 import BeautifulSoup as bs
 from parsing.utils import add_lexical_features
 import copy
 
+from collections import OrderedDict, defaultdict
+
 
 def read_csv(file_path: str, delim='\t', return_dict=True):
     """
@@ -280,6 +282,7 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
     # add lexical features
     add_lexical_features(nlp, mention_map)
     # bert doc
+    add_bert_docs(mention_map, doc_sent_map)
     add_bert_docs(mention_map, doc_sent_map)
     return mention_map
 
