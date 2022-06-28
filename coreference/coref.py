@@ -1,35 +1,71 @@
 # Author: Rehan
 # Run an end-to-end event coreference resolution experiment using the LDC annotations
 import os
+import pickle
 import sys
-sys.path.insert(0, os.getcwd())
 
+sys.path.insert(0, os.getcwd())
 from parsing.parse_ldc import extract_mentions
+from bert_stuff import *
 import argparse
+
 from collections import defaultdict
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
-from sklearn.cluster import AgglomerativeClustering
 import numpy as np
-import spacy
-
-nlp = spacy.load('en_core_web_sm')
 
 
-class Cluster:
-    def __init__(self, mention_dicts):
-        self.mention_dicts = mention_dicts
-        self.doc_ids = set([m['doc_id'] for m in mention_dicts])
-        self.topic = mention_dicts[0]['topic']
-        self.id_ = id(self)
+def get_cosine_similarities(mention_pairs, vector_map):
+    """
+    Calculate the cosine similarity as row wise dot product of 2 arrays of vectors
 
-    def merge_cluster(self, event):
-        self.mention_dicts.extend(event.mention_dicts)
-        self.doc_ids.update(event.doc_ids)
+    Parameters
+    ----------
+    mention_pairs: list
+    vector_map: dict
 
-    def from_same_doc(self, event):
-        return len(self.doc_ids.intersection(event.doc_ids)) > 0
+    Returns
+    -------
+    list
+    """
+
+    def normed(a):
+        return a / np.linalg.norm(a, axis=1).reshape((-1, 1))
+
+    m1s, m2s = zip(*mention_pairs)
+    lhs = np.array([vector_map[m].detach().cpu().numpy() for m in m1s])
+    rhs = np.array([vector_map[m].detach().cpu().numpy() for m in m2s])
+
+    return np.sum(normed(lhs) * normed(rhs), axis=1)
+
+
+def get_mention_pair_similarity_cdlm_bi(mention_pairs, mention_map, relations, working_folder):
+    """
+    Generate similarity using CDLM as a bi-encoder, i.e., generate mention embeddings and calculate
+    cosine similarity between the mention_pairs
+
+    Parameters
+    ----------
+    mention_pairs: list
+    mention_map: list
+    relations: list
+    working_folder: str
+
+    Returns
+    -------
+    list
+    """
+    # get the CDLM embeddings for the mentions
+    vec_map_path = working_folder + '/cdlm_vec_map.pkl'
+    # # if the vector map pickle file does not exist, generate the embeddings
+    if not os.path.exists(vec_map_path):
+        # use the appropriate key name i.e. bert_doc for longer documents and bert_sentence for sentences
+        generate_cdlm_embeddings(mention_map, vec_map_path, key_name='bert_doc', num_gpus=4, batch_size=20, cpu=False)
+    # # read the vector_map pickle
+    cdlm_vec_map = pickle.load(open(vec_map_path, 'rb'))
+    # # generate and return the cosine similarities
+    return get_cosine_similarities(mention_pairs, cdlm_vec_map)
 
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
@@ -57,15 +93,7 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
         men_map2 = mention_map[men2]
         men_text1 = men_map1['mention_text']
         men_text2 = men_map2['mention_text']
-        lemma1 = men_map1['lemma']
-        lemma2 = men_map2['lemma']
-
-        fnames1 = men_map1['frames']
-        fnames2 = men_map2['frames']
-
-        same_frame = len(fnames1.intersection(fnames2)) > 0
-
-        similarities.append(int(lemma1 in men_text2 or lemma2 in men_text1))
+        similarities.append(int(men_text1 == men_text2))
 
     return similarities
 
@@ -108,6 +136,75 @@ def cluster_cc(affinity_matrix, threshold=0.8):
     return clusters, labels
 
 
+def coreference(curr_mention_map, all_mention_map, working_folder,
+                men_type='evt', relations=None, sim_type='lemma'):
+    """
+
+    Parameters
+    ----------
+    curr_mention_map
+    all_mention_map
+    working_folder
+    men_type
+    sim_type
+    relations
+
+    Returns
+    -------
+
+    """
+
+    # sort event mentions and make men to ind map
+    curr_mentions = sorted(list(curr_mention_map.keys()), key=lambda x: curr_mention_map[x]['m_id'])
+    curr_men_to_ind = {eve: i for i, eve in enumerate(curr_mentions)}
+
+    # generate gold clusters key file
+    curr_gold_cluster_map = [(men, all_mention_map[men]['gold_cluster']) for men in curr_mentions]
+    gold_key_file = working_folder + f'/{men_type}_gold.keyfile'
+    generate_key_file(curr_gold_cluster_map, men_type, working_folder, gold_key_file)
+
+    # group mentions by topic
+    topic_mention_dict = defaultdict(list)
+    for men_id, coref_map in curr_mention_map.items():
+        topic = coref_map['topic']
+        topic_mention_dict[topic].append(men_id)
+
+    # generate mention-pairs
+    mention_pairs = []
+    for mentions in topic_mention_dict.values():
+        list_mentions = list(mentions)
+        for i in range(len(list_mentions)):
+            for j in range(i + 1):
+                if i != j:
+                    mention_pairs.append((list_mentions[i], list_mentions[j]))
+
+    # get the similarities of the mention-pairs from either lemmas or cdlm embeddings
+    if sim_type == 'lemma':
+        similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
+    elif sim_type == 'cdlm':
+        similarities = get_mention_pair_similarity_cdlm_bi(mention_pairs, all_mention_map, relations, working_folder)
+
+    # get indices
+    mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
+    rows, cols = zip(*mention_ind_pairs)
+
+    # create similarity matrix from the similarities
+    n = len(curr_mentions)
+    similarity_matrix = np.identity(n)
+    similarity_matrix[rows, cols] = similarities
+
+    # clustering algorithm and mention cluster map
+    clusters, labels = connected_components(similarity_matrix)
+    system_mention_cluster_map = [(men, clus) for men, clus in zip(curr_mentions, labels)]
+
+    # generate system key file
+    system_key_file = working_folder + f'/{men_type}_system.keyfile'
+    generate_key_file(system_mention_cluster_map, men_type, working_folder, system_key_file)
+
+    # evaluate
+    generate_results(gold_key_file, system_key_file)
+
+
 def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
     """
     Run the coreference resolution pipeline on LDC annotations in the following steps:
@@ -144,110 +241,7 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
     # create a single dict for all mentions
     all_mention_map = {**eve_mention_map, **ent_mention_map}
 
-    # sort event mentions and make men to ind map
-    curr_mentions = sorted(list(curr_mention_map.keys()), key=lambda x: curr_mention_map[x]['m_id'])
-    curr_men_to_ind = {eve: i for i, eve in enumerate(curr_mentions)}
-
-    # generate gold clusters key file
-    curr_gold_cluster_map = [(men, all_mention_map[men]['gold_cluster']) for men in curr_mentions]
-    gold_key_file = working_folder + f'/{men_type}_gold.keyfile'
-    generate_key_file(curr_gold_cluster_map, men_type, working_folder, gold_key_file)
-
-    # group mentions by topic
-    topic_mention_dict = defaultdict(list)
-    for men_id, coref_map in curr_mention_map.items():
-        topic = coref_map['topic']
-        topic_mention_dict[topic].append(men_id)
-
-    # generate mention-pairs
-    mention_pairs = []
-    for mentions in topic_mention_dict.values():
-        list_mentions = list(mentions)
-        for i in range(len(list_mentions)):
-            for j in range(i):
-                mention_pairs.append((list_mentions[i], list_mentions[j]))
-
-    # Generate pair-wise similarity matrix between the mentions of the same topic:
-    # TODO: can be made into a func:
-    #  generate_pair_wise_sim(mention_pairs, men2ind, mention_map, relations, working_folder)
-
-    ## get the similarities of the mention-pairs
-    similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
-    ## get indices
-    mention_ind_pairs = [(curr_men_to_ind[m1], curr_men_to_ind[m2]) for m1, m2 in mention_pairs]
-    rows, cols = zip(*mention_ind_pairs)
-    ## create similarity matrix from the similarities
-    n = len(curr_mentions)
-    similarity_matrix = np.identity(n)
-    similarity_matrix[rows, cols] = similarities
-    similarity_matrix[cols, rows] = similarities
-
-    # get within-doc mention clusters as {within_doc_cluster: [mention]}
-    # TODO: do within-doc clustering
-    within_doc_clusters = [Cluster([all_mention_map[mention]]) for mention in curr_mentions]
-
-    # get cross-doc mention clusters.
-    clusters, labels = cross_document_clustering(curr_mentions, within_doc_clusters, all_mention_map,
-                                                 relations, similarity_matrix, curr_men_to_ind)
-
-    # clustering algorithm and mention cluster map
-    # clusters, labels = connected_components(similarity_matrix)
-    system_mention_cluster_map = [(men, clus) for men, clus in zip(curr_mentions, labels)]
-
-    # generate system key file
-    system_key_file = working_folder + f'/{men_type}_system.keyfile'
-    generate_key_file(system_mention_cluster_map, men_type, working_folder, system_key_file)
-
-    # evaluate
-    generate_results(gold_key_file, system_key_file)
-
-
-def cross_document_clustering(mentions, within_doc_clusters, all_mention_map,
-                              relations, similarity_matrix, curr_men_to_ind):
-    """
-
-    Parameters
-    ----------
-    mentions: list
-    within_doc_clusters: list of Cluster
-    all_mention_map: dict
-    relations: list
-    similarity_matrix: np.array
-    curr_men_to_ind: dict
-
-    Returns
-    -------
-    list, list
-    """
-    # group clusters by topic
-    cluster_by_topic = defaultdict(list)
-    for cluster in within_doc_clusters:
-        cluster_by_topic[cluster.topic].append(cluster)
-
-    # clustering clusters by topic
-    mention_cluster_map = {}
-    for topic, clusters in cluster_by_topic.items():
-        cluster_sim_matrix = np.identity(len(clusters))
-        for i, cluster_1 in enumerate(clusters):
-            men_ids_1 = [curr_men_to_ind[m['mention_id']] for m in cluster_1.mention_dicts]
-            for j, cluster_2 in enumerate(clusters):
-                men_ids_2 = [curr_men_to_ind[m['mention_id']] for m in cluster_2.mention_dicts]
-                max_sim = max([similarity_matrix[m1, m2] for m1, m2 in zip(men_ids_1, men_ids_2)])
-                cluster_sim_matrix[i, j] = max_sim
-        _, labels = cluster_cc(cluster_sim_matrix)
-        for cluster, label in zip(clusters, labels):
-            for mention in cluster.mention_dicts:
-                mention_cluster_map[curr_men_to_ind[mention['mention_id']]] = topic + '_' + str(label)
-
-    # create an ordered list of labels for mentions
-    labels = [mention_cluster_map[men] for men in mentions]
-
-    # clusters by labels
-    mention_by_labels = defaultdict(list)
-    for mention, label in mention_cluster_map.items():
-        mention_by_labels[label].append(mention)
-
-    return list(mention_by_labels.values()), labels
+    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations, sim_type='cdlm')
 
 
 if __name__ == '__main__':

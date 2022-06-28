@@ -8,10 +8,10 @@ import pandas as pd
 from collections import OrderedDict, defaultdict
 import glob
 from zipfile import ZipFile
-
 import spacy
 from bs4 import BeautifulSoup as bs
 from parsing.utils import add_lexical_features
+import copy
 
 
 def read_csv(file_path: str, delim='\t', return_dict=True):
@@ -279,8 +279,38 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
     nlp = spacy.load('en_core_web_sm')
     # add lexical features
     add_lexical_features(nlp, mention_map)
-
+    # bert doc
+    add_bert_docs(mention_map, doc_sent_map)
     return mention_map
+
+
+def add_bert_docs(mention_map, doc_sent_map):
+    """
+    Add the entire document of the mention with the sentence corresponding to the mention
+    replaced by the bert_sentence (sentence in which the mention is surrounded by <m> and </m>)
+    The key for this is 'bert_doc'
+
+    Parameters
+    ----------
+    mention_map: dict
+    doc_sent_map : dict
+
+    Returns
+    -------
+    None
+    """
+    # for each mention create and add bert_doc
+    for mention in mention_map.values():
+        m_sentence_start_char = mention['sentence_start_char']
+        doc_id = mention['doc_id']
+        # create the copy of doc_id's sent_map
+        m_sent_map = copy.deepcopy(doc_sent_map[doc_id])
+        # replace the sentence associated with the mention with bert_sentence
+        m_sent_map[m_sentence_start_char]['sent_text'] = mention['bert_sentence']
+        # convert sent_map to text
+        bert_doc = '\n'.join([sent_map['sent_text'] for sent_map in m_sent_map.values()])
+        # add bert_doc in mention
+        mention['bert_doc'] = bert_doc
 
 
 def extract_mentions(ann_dir, source_dir, working_folder):
@@ -324,15 +354,14 @@ def extract_mentions(ann_dir, source_dir, working_folder):
     # generate mention maps
     eve_mention_map_file = working_folder + '/evt_mention_map.pkl'
     ent_mention_map_file = working_folder + '/ent_mention_map.pkl'
-
     if os.path.exists(eve_mention_map_file) and os.path.exists(ent_mention_map_file):
         # if files already there, just load the pickles
         eve_mention_map = pickle.load(open(eve_mention_map_file, 'rb'))
         ent_mention_map = pickle.load(open(ent_mention_map_file, 'rb'))
     else:
         # read the annotation files
-        eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "evt")
-        ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, "arg")
+        eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='evt')
+        ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='arg')
 
         # pickle them
         pickle.dump(eve_mention_map, open(eve_mention_map_file, 'wb'))
