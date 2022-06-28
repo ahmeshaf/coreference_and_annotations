@@ -11,6 +11,8 @@ from zipfile import ZipFile
 from bs4 import BeautifulSoup as bs
 import copy
 
+from collections import OrderedDict, defaultdict
+
 
 def read_csv(file_path: str, delim='\t', return_dict=True):
     """
@@ -272,8 +274,8 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
             m['bert_sentence'] = sent_text[: m_start_char - s_start_char] + ' <m> ' + \
                                  m['mention_text'] + ' </m> ' + \
                                  sent_text[m_end_char - s_start_char:]
+    add_bert_docs(mention_map, doc_sent_map)
     return mention_map
-
 
 def add_bert_docs(mention_map, doc_sent_map):
     """
@@ -302,7 +304,7 @@ def add_bert_docs(mention_map, doc_sent_map):
         bert_doc = '\n'.join([sent_map['sent_text'] for sent_map in m_sent_map.values()])
         # add bert_doc in mention
         mention['bert_doc'] = bert_doc
-
+    
 
 def extract_mentions(ann_dir, source_dir, working_folder):
     """

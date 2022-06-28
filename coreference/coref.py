@@ -1,16 +1,68 @@
 # Author: Rehan
 # Run an end-to-end event coreference resolution experiment using the LDC annotations
 import os
+import pickle
 import sys
 sys.path.insert(0, os.getcwd())
-
 from parsing.parse_ldc import extract_mentions
+from bert_stuff import *
 import argparse
+
 from collections import defaultdict
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
 import numpy as np
+
+
+def get_cosine_similarities(mention_pairs, vector_map):
+    """
+    Calculate the cosine similarity as row wise dot product of 2 arrays of vectors
+
+    Parameters
+    ----------
+    mention_pairs: list
+    vector_map: dict
+
+    Returns
+    -------
+    list
+    """
+    def normed(a):
+        return a/np.linalg.norm(a, axis=1).reshape((-1, 1))
+    m1s, m2s = zip(*mention_pairs)
+    lhs = np.array([vector_map[m].detach().cpu().numpy() for m in m1s])
+    rhs = np.array([vector_map[m].detach().cpu().numpy() for m in m2s])
+
+    return np.sum(normed(lhs) * normed(rhs), axis=1)
+
+
+def get_mention_pair_similarity_cdlm_bi(mention_pairs, mention_map, relations, working_folder):
+    """
+    Generate similarity using CDLM as a bi-encoder, i.e., generate mention embeddings and calculate
+    cosine similarity between the mention_pairs
+
+    Parameters
+    ----------
+    mention_pairs: list
+    mention_map: list
+    relations: list
+    working_folder: str
+
+    Returns
+    -------
+    list
+    """
+    # get the CDLM embeddings for the mentions
+    vec_map_path = working_folder + '/cdlm_vec_map.pkl'
+    # # if the vector map pickle file does not exist, generate the embeddings
+    if not os.path.exists(vec_map_path):
+        # use the appropriate key name i.e. bert_doc for longer documents and bert_sentence for sentences
+        generate_cdlm_embeddings(mention_map, vec_map_path, key_name='bert_doc', num_gpus=4, batch_size=20, cpu=False)
+    # # read the vector_map pickle
+    cdlm_vec_map = pickle.load(open(vec_map_path, 'rb'))
+    # # generate and return the cosine similarities
+    return get_cosine_similarities(mention_pairs, cdlm_vec_map)
 
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
@@ -81,7 +133,8 @@ def cluster_cc(affinity_matrix, threshold=0.8):
     return clusters, labels
 
 
-def coreference(curr_mention_map, all_mention_map, working_folder, men_type='evt', relations=None):
+def coreference(curr_mention_map, all_mention_map, working_folder,
+                men_type='evt', relations=None, sim_type='lemma'):
     """
 
     Parameters
@@ -90,12 +143,14 @@ def coreference(curr_mention_map, all_mention_map, working_folder, men_type='evt
     all_mention_map
     working_folder
     men_type
+    sim_type
     relations
 
     Returns
     -------
-
+ 
     """
+    
     # sort event mentions and make men to ind map
     curr_mentions = sorted(list(curr_mention_map.keys()), key=lambda x: curr_mention_map[x]['m_id'])
     curr_men_to_ind = {eve: i for i, eve in enumerate(curr_mentions)}
@@ -120,8 +175,11 @@ def coreference(curr_mention_map, all_mention_map, working_folder, men_type='evt
                 if i != j:
                     mention_pairs.append((list_mentions[i], list_mentions[j]))
 
-    # get the similarities of the mention-pairs
-    similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
+    # get the similarities of the mention-pairs from either lemmas or cdlm embeddings 
+    if sim_type == 'lemma':
+        similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
+    elif sim_type == 'cdlm':
+        similarities = get_mention_pair_similarity_cdlm_bi(mention_pairs, all_mention_map, relations, working_folder)
 
     # get indices
     mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
@@ -180,7 +238,7 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
     # create a single dict for all mentions
     all_mention_map = {**eve_mention_map, **ent_mention_map}
 
-    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations)
+    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations, sim_type='cdlm')
 
 
 if __name__ == '__main__':
