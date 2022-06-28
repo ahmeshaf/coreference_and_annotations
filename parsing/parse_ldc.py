@@ -14,7 +14,6 @@ import copy
 from collections import OrderedDict, defaultdict
 
 
-
 def read_csv(file_path: str, delim='\t', return_dict=True):
     """
     Converts a csv/tsv file into a list of dicts
