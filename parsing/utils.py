@@ -2,7 +2,8 @@
 import spacy
 from nltk.corpus import wordnet as wn
 from nltk.corpus import lin_thesaurus as thes
-from nltk.corpus import framenet15 as fn
+from nltk.corpus import framenet as fn
+
 
 def get_derivationally_related_verbs(spacy_doc):
     """
@@ -36,6 +37,15 @@ def get_derivationally_related_verbs(spacy_doc):
                     if form.synset().pos() == 'v':
                         lemma_set.add(form._name)
     return list(lemma_set)
+
+
+def add_sentential_features(nlp, mention_map):
+    for mention in mention_map.values():
+        sent_nlp = nlp(mention['sentence'])
+        mention['sentence_tokens'] = []
+        for token in sent_nlp:
+            if not token.is_stop:
+                mention['sentence_tokens'].append(token.lemma_)
 
 
 def add_lexical_features(nlp, mention_map):

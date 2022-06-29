@@ -4,146 +4,193 @@ random.seed(42)
 from copy import copy
 
 
-class IncrementalClusterer():
+class Cluster:
     """
-        Class to do coreference resolution through incremental clustering.
-        Class is useful to save states when running in annotation mode
-
-        Class Members
-        _____________
-        event_clusters: dict
+    A class of cluster of mentions
     """
-    def __init__(self, filter_func=None):
+    def __init__(self, mention_dict):
+        self.mention_dicts = [mention_dict]
+        self.doc_ids = set([m['doc_id'] for m in self.mention_dicts])
+        self.topic = mention_dict['topic']
+        self.gold_cluster = str(mention_dict['gold_cluster'])
+        self.id_ = id(self)
+
+    def merge_mention(self, mention_dict):
+        self.mention_dicts.append(mention_dict)
+        self.doc_ids.add(mention_dict['doc_id'])
+
+    def merge_cluster(self, cluster):
+        self.mention_dicts.extend(cluster.mention_dicts)
+        self.doc_ids.update(cluster.doc_ids)
+
+    def __hash__(self):
+        return hash(self.id_)
+
+
+class Clustering:
+    """
+    A class to do clustering. This class eases continuing incremental clustering
+    upon exit
+
+    Attributes
+    __________
+    mentions: list[str]
+    lemma2clusters: dict
+        A dict of str: set(Cluster)
+    frame2clusters: dict
+        A dict of str: set(Cluster)
+    token2clusters: dict
+        A dict of str: set(Cluster)
+    clusters: list
+        A list of current clusters
+    comparisons: int
+
+    """
+    def __init__(self, mentions=None):
+        self.mentions = mentions[:]
+        self.lemma2clusters = defaultdict(set)
+        self.frame2clusters = defaultdict(set)
+        self.token2clusters = defaultdict(set)
+        self.clusters = []
+        self.comparisons = 0
+
+    def load_state(self, other):
         """
 
         Parameters
         ----------
-        filter_func: func
-            A function that does filtering of candidates (eg., based on topic)
-        """
-        self.event_clusters = defaultdict(set)
-        self.lemma_clus_map = defaultdict(set)
-        self.tok_clus_map = defaultdict(set)
-        self.filter = filter_func
+        other: Clustering
 
-    def copy(self, inc_class):
+        Returns
+        -------
+
         """
-        Deep copy of the current class
+        self.mentions = other.mentions
+        self.lemma2clusters = copy(other.lemma2clusters)
+        self.frame2clusters = copy(other.frame2clusters)
+        self.clusters = copy(other.clusters)
+        self.comparisons = copy(other.comparisons)
+
+    def candidates(self, mention_dict):
+        """
+
         Parameters
         ----------
-        inc_class: IncrementalClusterer
+        mention_dict: dict
 
         Returns
         -------
-        None
+        list[Cluster]
         """
-        self.event_clusters = copy(inc_class.event_clusters)
-        self.lemma_clus_map = copy(inc_class.lemma_clus_map)
-        self.tok_clus_map = copy(inc_class.tok_clus_map)
-        self.filter = inc_class.filter
+        topic = mention_dict['topic']
+        lemma = mention_dict['lemma']
+        frames = mention_dict['frames']
+        sent_tokens = mention_dict['sentence']
 
-    def clear_globals(self):
-        """
-        Clear global variables
-        Returns
-        -------
-        None
-        """
-        self.event_clusters.clear()
-        self.lemma_clus_map.clear()
-        self.tok_clus_map.clear()
+        candidates = set()
+        candidates.update(self.lemma2clusters[lemma])
+        for frame in frames:
+            candidates.update(self.frame2clusters[frame])
+        for tok in sent_tokens:
+            candidates.update(self.token2clusters[tok])
 
-    def get_possible_clus_lemma(self, mentions_dicts):
-        lemmas = set([m['lemma'] for m in mentions_dicts])
-        possible_clus = set()
-        for lemma in lemmas:
-            possible_clus.update(self.lemma_clus_map[lemma])
-        return possible_clus
+        return [cand for cand in candidates if cand.topic == topic]
 
-    def get_possible_clus_from_toks(self, mentions_dicts):
-        all_tokens = [tok.lower() for mention in mentions_dicts for tok in mention['sentence_toks']]
-        possible_clus = []
-        for tok in all_tokens:
-            cluses = self.tok_clus_map[tok]
-            possible_clus.extend(cluses)
-        return possible_clus
+    def nearest_neighbors(self, mention_dict, men2id, similarity_matrix, top_n=3):
+        topic = mention_dict['topic']
+        # get all topic clusters
+        possible_clusters = [clus for clus in self.clusters if clus.topic == topic]
 
-    def merge_cluster(self, clus, event, mentions_dicts):
-        lemmas = set([m['lemma'] for m in mentions_dicts])
+        men_id = mention_dict['mention_id']
 
-        for lemma in lemmas:
-            self.lemma_clus_map[lemma].add(clus)
-            if event in self.lemma_clus_map[lemma]:
-                self.lemma_clus_map[lemma].remove(event)
+        # sim values
+        similarities = [
+            max([similarity_matrix[men2id[men_id], men2id[m['mention_id']]] for m in clus.mention_dicts])
+            for clus in possible_clusters
+        ]
 
-        all_tokens = [tok.lower() for mention in mentions_dicts for tok in mention['sentence_toks']]
-        for tok in all_tokens:
-            self.tok_clus_map[tok].add(clus)
-            if event in self.tok_clus_map[tok]:
-                self.tok_clus_map[tok].remove(event)
+        zipped_clusters = zip(possible_clusters, similarities)
 
-        self.event_clusters[clus].add(event)
+        return sorted(zipped_clusters, key=lambda x: -x[-1])[:top_n]
 
-    def add_cluster(self, eve, mentions_dicts):
-        lemmas = set([m['lemma'] for m in mentions_dicts])
-        for lemma in lemmas:
-            self.lemma_clus_map[lemma].add(eve)
+    def update_cluster_maps(self, cluster, mention_dict):
+        lemma = mention_dict['lemma']
+        sent_tokens = mention_dict['sentence_tokens']
+        frames = mention_dict['frames']
+        self.lemma2clusters[lemma].add(cluster)
+        for frame in frames:
+            if frame is not None and frame != '':
+                self.frame2clusters[frame].add(cluster)
+        for tok in sent_tokens:
+            self.token2clusters[tok].add(cluster)
 
-        all_tokens = [tok.lower() for mention in mentions_dicts for tok in mention['sentence_toks']]
-        for tok in all_tokens:
-            self.tok_clus_map[tok].add(eve)
+    def merge_cluster(self, cluster, mention_dict):
+        cluster.merge_mention(mention_dict)
+        self.update_cluster_maps(cluster, mention_dict)
 
-        self.event_clusters[eve].add(eve)
+    def add_cluster(self, mention_dict):
+        cluster = Cluster(mention_dict)
+        self.clusters.append(cluster)
+        self.update_cluster_maps(cluster, mention_dict)
 
-    def from_same_doc(self, clus, event):
-        events_in_cluster = self.event_clusters[clus]
-        docs = set([e.split(':')[0] for e in events_in_cluster])
-        eve_doc = event.split(':')[0]
-        return eve_doc in docs
+    def run_clustering(self, mention_map, men2id, similarity_matrix,
+                       top_n=100, threshold=0.8, simulation=False,
+                       random_run=False):
+        while len(self.mentions) > 0:
+            mention = self.mentions.pop(0)
+            mention_dict = mention_map[mention]
+            cluster_candidates = self.candidates(mention_dict)
 
-    def sample_candidates(self, event, mentions_dicts, token_threshold=1):
-        possible_clus_lemma = list(self.get_possible_clus_lemma(mentions_dicts))
-        possible_clus_tok = list(self.get_possible_clus_from_toks(mentions_dicts))
+            similarities = [
+                max([similarity_matrix[men2id[mention], men2id[m['mention_id']]] for m in clus.mention_dicts])
+                for clus in cluster_candidates
+            ]
 
-        tok_clus_counter = Counter(possible_clus_tok).most_common()
-        tok_clus_thres = set([p[0] for p in tok_clus_counter if p[1] > token_threshold])
+            # zip candidate cluster with the similarity value
+            zipped_clusters = zip(cluster_candidates, similarities)
 
-        possible_clus_tok = [p for p in possible_clus_tok if p in tok_clus_thres]
-        possible_clus = [c for c in possible_clus_lemma + possible_clus_tok if not self.from_same_doc(c, event)]
-        counter = Counter(possible_clus)
-        possible_clus = [p[0] for p in counter.most_common() if event != p[0]]
+            # sort clusters based on similarity
+            sorted_clusters = sorted(zipped_clusters, key=lambda x: -x[-1])
 
-        if self.filter != None:
-            possible_clus = self.filter(event, possible_clus)
+            # ignore sorting by scores - case when we want to test fully manual
+            # random simulation
+            if random_run:
+                sorted_clusters = zipped_clusters
 
-        return possible_clus
+            # pick top-n clusters
+            sorted_clusters = sorted_clusters[:top_n]
 
-    def run_clustering_on(self, mentions, all_mention_map, working_folder, run_within_doc=True, simulation=True):
-        """
-        Run clustering algorithm:
-            1. Group mentions by docs
-            2. Run Within-doc clustering of mentions for each doc and create mention clusters
-            3. Group mentions clusters by topic
-            3. Run Cross-doc clustering
-        Parameters
-        ----------
-        mentions: list
-        all_mention_map: dict
-        working_folder: str
-        run_within_doc: bool
-        simulation: bool
+            # variable to know if the mention was merged /w existing cluster
+            is_merged = False
 
-        Returns
-        -------
-        None
-        """
-        # 1. Group mentions by docs
-        mentions_by_doc = defaultdict(list)
-        for mention in mentions:
-            mentions_by_doc[all_mention_map[mention]['doc_id']].append(mention)
+            # iterate through the candidates, merge and break if suitable cluster is found
+            for clus, sim in sorted_clusters:
+                self.comparisons += 1
+                # merge if 1. running simulation and gold cluster matches
+                #       or 2. not running simulation and similarity is above threshold
+                if (simulation and clus.gold_cluster == str(mention_dict['gold_cluster'])) or \
+                        (not simulation and sim > threshold):
+                    self.merge_cluster(clus, mention_dict)
+                    is_merged = True
+                    break
 
-        # 2. Run within-doc clustering
-        if run_within_doc or ('within_doc_cluster' not in all_mention_map[mentions[0]]):
-            add_within_doc_clusters(mentions_by_doc, all_mention_map, working_folder, simulation)
+            if not is_merged:
+                self.add_cluster(mention_dict)
 
+        # return clusters, labels
+        return [men2id[m['mention_id']] for clus in self.clusters for m in clus.mention_dicts],\
+               {
+            m['mention_id']: clus_id for clus_id, clus in enumerate(self.clusters) for m in clus.mention_dicts
+        }
+
+
+def incremental_clustering(similarity_matrix, threshold, mentions, mention_map, men2id):
+    clustering = Clustering(mentions)
+    clusters, mention_clus_map = clustering.run_clustering(mention_map, men2id, similarity_matrix,
+                                                           threshold=threshold, simulation=False)
+
+    # order the labels according to the mentions
+    labels = [mention_clus_map[men] for men in mentions]
+
+    return clusters, labels
 

@@ -5,7 +5,7 @@ import pickle
 import sys
 sys.path.insert(0, os.getcwd())
 from parsing.parse_ldc import extract_mentions
-from bert_stuff import *
+# from bert_stuff import generate_cdlm_embeddings
 import argparse
 
 from collections import defaultdict
@@ -13,6 +13,8 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
 import numpy as np
+from incremental_clustering import incremental_clustering
+from sklearn.cluster import AgglomerativeClustering
 
 
 def get_cosine_similarities(mention_pairs, vector_map):
@@ -112,8 +114,12 @@ def cluster_agglo(affinity_matrix, threshold=0.5):
     # convert affinity into distance
     distance_matrix = 1 - np.array(affinity_matrix)
     # fit predict
-    predictions = clustering_.fit_predict(distance_matrix)
-    return predictions
+    labels = clustering_.fit_predict(distance_matrix)
+    # get clusters
+    clusters = defaultdict(list)
+    for ind, label in enumerate(labels):
+        clusters[label].append(ind)
+    return list(clusters.values()), labels
 
 
 def cluster_cc(affinity_matrix, threshold=0.8):
@@ -134,7 +140,8 @@ def cluster_cc(affinity_matrix, threshold=0.8):
 
 
 def coreference(curr_mention_map, all_mention_map, working_folder,
-                men_type='evt', relations=None, sim_type='lemma'):
+                men_type='evt', relations=None, sim_type='lemma',
+                cluster_algo='cc', threshold=0.8):
     """
 
     Parameters
@@ -143,9 +150,11 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
     all_mention_map
     working_folder
     men_type
-    sim_type
     relations
-
+    sim_type
+    cluster_algo: str
+        clustering algorithm, options: ['cc', 'agglo', 'inc']
+    threshold: double
     Returns
     -------
 
@@ -191,7 +200,15 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
     similarity_matrix[rows, cols] = similarities
 
     # clustering algorithm and mention cluster map
-    clusters, labels = connected_components(similarity_matrix)
+    if cluster_algo == 'cc':
+        clusters, labels = cluster_cc(similarity_matrix)
+    elif cluster_algo == 'agglo':
+        clusters, labels = cluster_agglo(similarity_matrix)
+    elif cluster_algo == 'inc':
+        clusters, labels = incremental_clustering(similarity_matrix, threshold, curr_mentions,
+                                                  all_mention_map, curr_men_to_ind)
+    else:
+        raise AssertionError
     system_mention_cluster_map = [(men, clus) for men, clus in zip(curr_mentions, labels)]
 
     # generate system key file
@@ -238,7 +255,8 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
     # create a single dict for all mentions
     all_mention_map = {**eve_mention_map, **ent_mention_map}
 
-    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations, sim_type='cdlm')
+    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations,
+                sim_type='lemma', cluster_algo='inc')
 
 
 if __name__ == '__main__':

@@ -10,7 +10,7 @@ import glob
 from zipfile import ZipFile
 import spacy
 from bs4 import BeautifulSoup as bs
-from parsing.utils import add_lexical_features
+from parsing.utils import add_lexical_features, add_sentential_features
 import copy
 
 from collections import OrderedDict, defaultdict
@@ -281,9 +281,11 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
     nlp = spacy.load('en_core_web_sm')
     # add lexical features
     add_lexical_features(nlp, mention_map)
+    # add sentential features
+    add_sentential_features(nlp, mention_map)
     # bert doc
     add_bert_docs(mention_map, doc_sent_map)
-    add_bert_docs(mention_map, doc_sent_map)
+
     return mention_map
 
 
