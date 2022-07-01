@@ -104,7 +104,7 @@ def action_filter(lex_unit):
     if lex_unit.name.endswith('.v'):
         return True
     elif lex_unit.name.endswith('.n'):
-        agent_nouns = {'one', 'who', 'person', 'entity'}
+        agent_nouns = {'one', 'who', 'person', 'entity', 'someone', 'somebody'}
 
         # some lex unit names have information like [entity], [person] etc.
         entity_names = set([f'[{word}]' for word in ['entity', 'item', 'person']])
@@ -114,7 +114,7 @@ def action_filter(lex_unit):
 
         # check if for 5 words in the definition of lex unit has an agent noun
         # presence of those words point to the lex unit being a role instead of action
-        agent_in_def = len(agent_nouns.intersection(lex_unit.definition.split()[:5])) > 0
+        agent_in_def = len(agent_nouns.intersection(lex_unit.definition.split()[:3])) > 0
 
         # semType contains agentive sem type
         has_agentive_sem = len(agentive_sem_types.intersection([s.name for s in lex_unit.semTypes])) > 0
@@ -160,7 +160,7 @@ def get_action_lexical_units_fn(action_seeds):
 
 if __name__ == '__main__':
     lus = get_action_lexical_units_fn(action_seed_frames)
-    lus = sorted(lus, key=lambda x: (x[0][-1], x[1], x[0]))
+    lus = sorted(lus, key=lambda x: (x[0][-1], x[0], x[1]))
 
     with open('lexical_units_actions.tsv', 'w') as alf:
         alf.write('lexeme\tframe_name\tlexUnit_name\n')

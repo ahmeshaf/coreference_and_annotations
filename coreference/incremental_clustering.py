@@ -47,7 +47,8 @@ class Clustering:
 
     """
     def __init__(self, mentions=None):
-        self.mentions = mentions[:]
+        if mentions is not None:
+            self.mentions = mentions[:]
         self.lemma2clusters = defaultdict(set)
         self.frame2clusters = defaultdict(set)
         self.token2clusters = defaultdict(set)
@@ -89,8 +90,8 @@ class Clustering:
 
         candidates = set()
         candidates.update(self.lemma2clusters[lemma])
-        for frame in frames:
-            candidates.update(self.frame2clusters[frame])
+        # for frame in frames:
+        #     candidates.update(self.frame2clusters[frame])
         for tok in sent_tokens:
             candidates.update(self.token2clusters[tok])
 
@@ -193,4 +194,3 @@ def incremental_clustering(similarity_matrix, threshold, mentions, mention_map, 
     labels = [mention_clus_map[men] for men in mentions]
 
     return clusters, labels
-

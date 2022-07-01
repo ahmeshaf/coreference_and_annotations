@@ -254,6 +254,7 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
             'm_id': mention_to_m_id[row[mention_id_col_name]],
             'mention_id': row[mention_id_col_name],
             'doc_id': row['child_uid'],
+            'men_type': mention_type,
             'start_char': int(row['textoffset_startchar']),
             'end_char': int(row['textoffset_endchar']),
             'gold_cluster': linking_map[row[mention_id_col_name]],
@@ -273,6 +274,7 @@ def get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, only_text=
             m['mention_text'] = sent_text[m_start_char - s_start_char: m_end_char - s_start_char]
             m['sentence_start_char'] = s_start_char
             m['sentence'] = sent_text
+            m['sent_id'] = sent_map['sent_id']
             m['bert_sentence'] = sent_text[: m_start_char - s_start_char] + ' <m> ' + \
                                  m['mention_text'] + ' </m> ' + \
                                  sent_text[m_end_char - s_start_char:]
