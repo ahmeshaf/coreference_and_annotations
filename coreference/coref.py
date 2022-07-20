@@ -5,7 +5,8 @@ import pickle
 import sys
 sys.path.insert(0, os.getcwd())
 from parsing.parse_ldc import extract_mentions
-# from bert_stuff import generate_cdlm_embeddings
+from bert_stuff_crossencoder import * # for importing cdlm cross-encoder
+# from bert_stuff import generate_cdlm_embeddings  # for importing cdlm-bi-encoder
 import argparse
 
 from collections import defaultdict
@@ -66,6 +67,33 @@ def get_mention_pair_similarity_cdlm_bi(mention_pairs, mention_map, relations, w
     # # generate and return the cosine similarities
     return get_cosine_similarities(mention_pairs, cdlm_vec_map)
 
+def get_mention_pair_similarity_cdlm_cross(mention_pairs, mention_map, relations, working_folder):
+    """
+    Generate similarity using CDLM as a cross-encoder, i.e., generate mention embeddings and calculate
+    pairwise scoring between embeddings of mention_pairs
+
+    Parameters
+    ----------
+    mention_pairs: list
+    mention_map: list
+    relations: list
+    working_folder: str
+
+    Returns
+    -------
+    list
+    """
+    # get the CDLM embeddings for the mentions
+    vec_map_path = working_folder + '/cdlm_vec_map_crossencoder.pkl'
+    # # if the vector map pickle file does not exist, generate the cross embeddings and get pairwise cdlm scores
+    if not os.path.exists(vec_map_path):
+        # use the appropriate key name i.e. bert_doc for longer documents and bert_sentence for sentences
+         
+        generate_cross_cdlm_embeddings(mention_pairs, mention_map, vec_map_path, key_name='bert_sentence', num_gpus=4, batch_size=150, cpu=False)
+    # # read the vector_map pickle
+    cdlm_scores = pickle.load(open(vec_map_path, 'rb'))
+    
+    return cdlm_scores
 
 def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, working_folder):
     """
@@ -189,7 +217,10 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
         similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
     elif sim_type == 'cdlm':
         similarities = get_mention_pair_similarity_cdlm_bi(mention_pairs, all_mention_map, relations, working_folder)
-
+    elif sim_type == 'cross-encoder': 
+        similarities = get_mention_pair_similarity_cdlm_cross(mention_pairs, curr_mention_map, relations, working_folder)
+        similarities = [x for x in similarities.values()] #returns a dict with pairwise mention_ids as key, so only use scores 
+    
     # get indices
     mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
     rows, cols = zip(*mention_ind_pairs)
