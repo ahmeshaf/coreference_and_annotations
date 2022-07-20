@@ -3,11 +3,13 @@
 import pickle
 import pyhocon
 import torch.nn.functional as F
+from transformers import AutoModel
 from models import *
 import torch
 from tqdm import tqdm
 from collections import defaultdict
-
+model_dir = '/s/chopin/d/proj/ramfis-aida/coref/coreference_and_annotations/cdlm/models/cdlm2/'
+lin_model_dir = '/s/chopin/d/proj/ramfis-aida/coref/coreference_and_annotations/cdlm/models/cdlm2/linear'
 
 def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device, batch_size=150):
     parallel_model.eval()
@@ -247,7 +249,10 @@ def generate_cross_cdlm_embeddings(mention_pairs, mention_map, vec_map_path, key
         device = torch.device("cpu")
 
     # instantiate the cross encoder from models.py, use FullCrossEncoder for cross encoding mentions 
-    cross_encoder = FullCrossEncoder(config, long=True, is_training=True)
+    cross_encoder = FullCrossEncoder(config, long=True, is_training=True).to(device)
+    cross_encoder.model = AutoModel.from_pretrained(model_dir).to(device)
+    
+    cross_encoder.linear.load_state_dict(torch.load(os.path.join(lin_model_dir, 'linear')))
     cross_encoder = cross_encoder.to(device)
 
     parallel_model = torch.nn.DataParallel(cross_encoder, device_ids=device_ids)
