@@ -8,6 +8,7 @@ from nltk.corpus import framenet15 as fn
 import spacy
 from bs4 import BeautifulSoup
 from copy import deepcopy
+from tqdm.autonotebook import tqdm
 
 VALIDATION = ['2', '5', '12', '18', '21', '23', '34', '35']
 TRAIN = [str(i) for i in range(1, 36) if str(i) not in VALIDATION]
@@ -51,7 +52,7 @@ def get_sent_map_simple(doc_bs):
     return all_token_map, sent_map
 
 
-def parse_annotations(annotation_folder, output_folder):
+def parse_annotations(annotation_folder, output_folder, spacy_model='en_core_web_sm'):
     """
     Read the annotations files from ECB+_LREC2014
 
@@ -59,6 +60,7 @@ def parse_annotations(annotation_folder, output_folder):
     ----------
     annotation_folder
     output_folder
+    spacy_model
 
     Returns
     -------
@@ -85,7 +87,7 @@ def parse_annotations(annotation_folder, output_folder):
     mention_map = {}
     singleton_idx = 10000000000
 
-    for ann_file in glob.glob(ecb_plus_folder + "/*/*.xml"):
+    for ann_file in tqdm(list(glob.glob(ecb_plus_folder + "/*/*.xml")), desc='Reading ECB Corpus'):
         ann_bs = BeautifulSoup(open(ann_file, 'r').read())
         doc_name = ann_bs.find('document')['doc_name']
         topic = doc_name.split('_')[0]
@@ -149,6 +151,8 @@ def parse_annotations(annotation_folder, output_folder):
             sent_token_map = deepcopy(doc_sent_map[doc_name][sent_id]['token_map'])
             first_token_id = mention_tokens[0]['t_id']
             final_token_id = mention_tokens[-1]['t_id']
+            mention['start'] = int(sent_token_map[first_token_id]['number'])
+            mention['end'] = int(sent_token_map[final_token_id]['number'])
             sent_token_map[first_token_id]['text'] = '<m> ' + sent_token_map[first_token_id]['text']
             if final_token_id not in sent_token_map:
                 print(doc_name)
@@ -180,8 +184,11 @@ def parse_annotations(annotation_folder, output_folder):
             # add into mention map
             mention_map[doc_name + '_' + m_id] = mention
 
+    # save doc_sent_map
+    pickle.dump(doc_sent_map, open(output_folder + '/doc_sent_map.pkl', 'wb'))
+
     # lexical features
-    nlp = spacy.load('en_core_web_sm')
+    nlp = spacy.load(spacy_model)
     add_lexical_features(nlp, mention_map)
 
     # save pickle
@@ -202,27 +209,33 @@ def add_lexical_features(nlp, mention_map):
     -------
     None
     """
-    for men_id, mention in mention_map.items():
-        # parse spacy over mention_text
-        mention_nlp = nlp(mention['mention_text'])
 
-        mention_nlp_no_sw = nlp(' '.join([w.text for w in mention_nlp if not w.is_stop]))
+    mentions = list(mention_map.values())
 
-        # if mention is a stop word
-        if mention_nlp_no_sw.text == '':
-            mention['lemma'] = ""
-            mention['frames'] = set()
-            continue
+    mention_sentences = [mention['sentence'] for mention in mentions]
+
+    for i, doc in tqdm(enumerate(nlp.pipe(mention_sentences)),
+                       total=len(mention_sentences),
+                       desc='Adding Lexical Features'):
+        mention = mentions[i]
+
+        # get mention span
+        mention_span = doc[mention['start']:mention['end']+1]
+
+        # add char spans of root
+        root_index = mention_span.root.i
+        root_span = doc[root_index:root_index+1]
+        mention['start_char'] = root_span.start_char
+        mention['end_char'] = root_span.end_char
 
         # get lemma
-        mention['lemma'] = mention_nlp_no_sw[:].root.lemma_
+        mention['lemma'] = mention_span.root.lemma_
 
-        # get framenet frames
-        frames = set([f.name for f in fn.frames_by_lemma(mention['lemma'])])
-        mention['frames'] = frames
+        # lemma_start and end chars
+        mention['pos'] = mention_span.root.pos_
 
 
 if __name__ == '__main__':
     annotation_path = "/Users/rehan/workspace/data/ECB+_LREC2014"
     working_folder = "./ecb/"
-    parse_annotations(annotation_path, working_folder)
+    parse_annotations(annotation_path, working_folder, spacy_model='en_core_web_md')
