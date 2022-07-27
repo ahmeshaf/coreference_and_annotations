@@ -11,119 +11,124 @@ from collections import defaultdict
 model_dir = '/s/chopin/d/proj/ramfis-aida/coref/coreference_and_annotations/cdlm/models/cdlm2/'
 lin_model_dir = '/s/chopin/d/proj/ramfis-aida/coref/coreference_and_annotations/cdlm/models/cdlm2/linear'
 
-def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device, batch_size=15):
+def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device, batch_size=150):
     parallel_model.eval()
     topic_scores = []
     loc_mentions = []
     #batch_size=1
-
-    batch = [m_id_list[x] for x, y in m_id_list.items() ] #get the sentences from the pairwise m_id list 
-    batch = [x for xs in batch  for x in xs] #make a flat list for cdlm model inputs
-    batch = batch[40000:-1]
+    results = []
+    all_input_ids = list(m_id_list.items())
+    for index in range(0, len(all_input_ids), batch_size):
+        batch = [y for x,y in all_input_ids[index:index+batch_size]]
     
-    #print(batch)
-    print("batch creation", len(batch))
-
-
-    bert_tokens = parallel_model.module.tokenizer(batch, pad_to_max_length=True,
-                                                         add_special_tokens=False, truncation=False)
-
-    input_ids = torch.tensor(bert_tokens['input_ids'], device=device)
-    attention_mask = torch.tensor(bert_tokens['attention_mask'], device=device)
-
-    m = input_ids.cpu()
-    k = m == parallel_model.module.vals[0]
-    p = m == parallel_model.module.vals[1]
-
-    v = (k.int() + p.int()).bool()
-    nz_indexes = v.nonzero()[:, 1].reshape(m.shape[0], 4)
-    loc_mentions.extend(nz_indexes.cpu().numpy())
+        batch = [y for x, y in m_id_list.items() ] #get the sentences from the pairwise m_id list 
+        batch = [x for xs in batch  for x in xs] #make a flat list for cdlm model inputs
         
-        
-    overflow_idx = []
-    overflow_idx_diff = []
-    
-    for i, j in enumerate(loc_mentions):
-        #if j[3]-j[0] >= 4096 and j[3]>=4096 :
-        if j[3]-j[0] <= 4096 and j[3]>=4096 :
-            x = j[3]-j[0]
-            overflow_idx.append([i, j[3]])
-        if j[3]-j[0] > 4096 and j[3]>=4096 :
-            y = j[3]-j[0]
-            overflow_idx_diff.append([i,j[1], j[3]])
 
-    #cases where the last special token is outside of 4096 but difference is less than 4096 
-    idx = [x[0] for x in overflow_idx]
-    m_new = []
-    for i, j in enumerate(overflow_idx):
-        #bert_sent = bert_sentences[j[0]]
-        m_new.append(m[j[0],  j[1]-4096+1:j[1]+1])
+        #print(batch)
+        print("batch creation", len(batch))
 
 
-    m_new_tensor = torch.stack(m_new) 
-    m_new_tensor = F.pad(m_new_tensor, pad=(0, m.shape[1]-m_new_tensor.shape[1]), value=1)
+        bert_tokens = parallel_model.module.tokenizer(batch, pad_to_max_length=True,
+                                                             add_special_tokens=False, truncation=False)
 
-    #m[idx] = m_new_tensor
-    #cases where diff is more than 4096 and last token is > 4096 
-    
-    idx_diff = [x[0] for x in overflow_idx_diff]
-    m_new_start = []
-    m_new_end = []
-    for i, j in enumerate(overflow_idx_diff):
+        input_ids = torch.tensor(bert_tokens['input_ids'], device=device)
+        attention_mask = torch.tensor(bert_tokens['attention_mask'], device=device)
 
-        if j[1] >=2048:
-            m_new_start.append(m[j[0],  j[1]-2048+1:j[1]+1])
-        else:
-            m_new_start.append(m[j[0], 0:2048])
+        m = input_ids.cpu()
+        k = m == parallel_model.module.vals[0]
+        p = m == parallel_model.module.vals[1]
 
-        m_new_end.append(m[j[0],  j[2]-2048+1:j[2]+1])
-    start_tensor = torch.stack(m_new_start) 
-    end_tensor = torch.stack(m_new_end) 
-    concat_tensor= torch.cat([start_tensor, end_tensor], dim=1)
-    concat_tensor = F.pad(concat_tensor, pad=(0, m.shape[1]-concat_tensor.shape[1]), value=1)
-    concat_tensor= torch.cat([concat_tensor, m_new_tensor], dim=0) #concat the diff(>4096) between mentions along with no diff
-    idx_comb = idx_diff + idx
+        v = (k.int() + p.int()).bool()
+        nz_indexes = v.nonzero()[:, 1].reshape(m.shape[0], 4)
+        loc_mentions.extend(nz_indexes.cpu().numpy())
 
-    m[idx_comb] = concat_tensor
-    k = m == parallel_model.module.vals[0]
-    p = m == parallel_model.module.vals[1]
-    v = (k.int() + p.int()).bool()
-    nz_indexes = v.nonzero()[:, 1].reshape(m.shape[0], 4)
 
-    q = torch.arange(m.shape[1])
-    q = q.repeat(m.shape[0], 1)
+        overflow_idx = []
+        overflow_idx_diff = []
 
-    msk_0 = (nz_indexes[:, 0].repeat(m.shape[1], 1).transpose(0, 1)) <= q
-    msk_1 = (nz_indexes[:, 1].repeat(m.shape[1], 1).transpose(0, 1)) >= q
-    msk_2 = (nz_indexes[:, 2].repeat(m.shape[1], 1).transpose(0, 1)) <= q
-    msk_3 = (nz_indexes[:, 3].repeat(m.shape[1], 1).transpose(0, 1)) >= q
+        for i, j in enumerate(loc_mentions):
+            #if j[3]-j[0] >= 4096 and j[3]>=4096 :
+            if j[3]-j[0] <= 4096 and j[3]>=4096 :
+                x = j[3]-j[0]
+                overflow_idx.append([i, j[3]])
+            if j[3]-j[0] > 4096 and j[3]>=4096 :
+                y = j[3]-j[0]
+                overflow_idx_diff.append([i,j[1], j[3]])
 
-    msk_0_ar = (nz_indexes[:, 0].repeat(m.shape[1], 1).transpose(0, 1)) < q
-    msk_1_ar = (nz_indexes[:, 1].repeat(m.shape[1], 1).transpose(0, 1)) > q
-    msk_2_ar = (nz_indexes[:, 2].repeat(m.shape[1], 1).transpose(0, 1)) < q
-    msk_3_ar = (nz_indexes[:, 3].repeat(m.shape[1], 1).transpose(0, 1)) > q
+        #cases where the last special token is outside of 4096 but difference is less than 4096 
+        idx = [x[0] for x in overflow_idx]
+        m_new = []
+        for i, j in enumerate(overflow_idx):
+            #bert_sent = bert_sentences[j[0]]
+            m_new.append(m[j[0],  j[1]-4096+1:j[1]+1])
 
-    attention_mask_g = msk_0.int() * msk_1.int() + msk_2.int() * msk_3.int()
 
-    input_ids = input_ids[:, :4096]
-    attention_mask = attention_mask[:, :4096]
-    attention_mask_g = attention_mask_g[:, :4096]
+        m_new_tensor = torch.stack(m_new) 
+        m_new_tensor = F.pad(m_new_tensor, pad=(0, m.shape[1]-m_new_tensor.shape[1]), value=1)
 
-    # 1 because we are letting this token be attended globally,
-    # not 2 because longformer issue resolved
-    # https://github.com/huggingface/transformers/issues/7015
-    attention_mask[:, 0] = 1
-    attention_mask[attention_mask_g == 1] = 1
+        #m[idx] = m_new_tensor
+        #cases where diff is more than 4096 and last token is > 4096 
 
-    arg1 = msk_0_ar.int() * msk_1_ar.int()
-    arg2 = msk_2_ar.int() * msk_3_ar.int()
-    arg1 = arg1[:, :4096]
-    arg2 = arg2[:, :4096]
-    arg1 = arg1.to(device)
-    arg2 = arg2.to(device)
+        idx_diff = [x[0] for x in overflow_idx_diff]
+        m_new_start = []
+        m_new_end = []
+        for i, j in enumerate(overflow_idx_diff):
+
+            if j[1] >=2048:
+                m_new_start.append(m[j[0],  j[1]-2048+1:j[1]+1])
+            else:
+                m_new_start.append(m[j[0], 0:2048])
+
+            m_new_end.append(m[j[0],  j[2]-2048+1:j[2]+1])
+        start_tensor = torch.stack(m_new_start) 
+        end_tensor = torch.stack(m_new_end) 
+        concat_tensor= torch.cat([start_tensor, end_tensor], dim=1)
+        concat_tensor = F.pad(concat_tensor, pad=(0, m.shape[1]-concat_tensor.shape[1]), value=1)
+        concat_tensor= torch.cat([concat_tensor, m_new_tensor], dim=0) #concat the diff(>4096) between mentions along with no diff
+        idx_comb = idx_diff + idx
+
+        m[idx_comb] = concat_tensor
+        k = m == parallel_model.module.vals[0]
+        p = m == parallel_model.module.vals[1]
+        v = (k.int() + p.int()).bool()
+        nz_indexes = v.nonzero()[:, 1].reshape(m.shape[0], 4)
+
+        q = torch.arange(m.shape[1])
+        q = q.repeat(m.shape[0], 1)
+
+        msk_0 = (nz_indexes[:, 0].repeat(m.shape[1], 1).transpose(0, 1)) <= q
+        msk_1 = (nz_indexes[:, 1].repeat(m.shape[1], 1).transpose(0, 1)) >= q
+        msk_2 = (nz_indexes[:, 2].repeat(m.shape[1], 1).transpose(0, 1)) <= q
+        msk_3 = (nz_indexes[:, 3].repeat(m.shape[1], 1).transpose(0, 1)) >= q
+
+        msk_0_ar = (nz_indexes[:, 0].repeat(m.shape[1], 1).transpose(0, 1)) < q
+        msk_1_ar = (nz_indexes[:, 1].repeat(m.shape[1], 1).transpose(0, 1)) > q
+        msk_2_ar = (nz_indexes[:, 2].repeat(m.shape[1], 1).transpose(0, 1)) < q
+        msk_3_ar = (nz_indexes[:, 3].repeat(m.shape[1], 1).transpose(0, 1)) > q
+
+        attention_mask_g = msk_0.int() * msk_1.int() + msk_2.int() * msk_3.int()
+
+        input_ids = input_ids[:, :4096]
+        attention_mask = attention_mask[:, :4096]
+        attention_mask_g = attention_mask_g[:, :4096]
+
+        # 1 because we are letting this token be attended globally,
+        # not 2 because longformer issue resolved
+        # https://github.com/huggingface/transformers/issues/7015
+        attention_mask[:, 0] = 1
+        attention_mask[attention_mask_g == 1] = 1
+
+        arg1 = msk_0_ar.int() * msk_1_ar.int()
+        arg2 = msk_2_ar.int() * msk_3_ar.int()
+        arg1 = arg1[:, :4096]
+        arg2 = arg2[:, :4096]
+        arg1 = arg1.to(device)
+        arg2 = arg2.to(device)
  
-    
-    
+        scores = parallel_model(input_ids, attention_mask, arg1, arg2)
+        scores = torch.sigmoid(scores)
+        topic_scores.extend(scores.detach().cpu().squeeze(1).numpy())
 
 
 
