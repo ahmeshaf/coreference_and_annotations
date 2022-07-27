@@ -11,12 +11,19 @@ from collections import defaultdict
 model_dir = '/s/chopin/d/proj/ramfis-aida/coref/coreference_and_annotations/cdlm/models/cdlm2/'
 lin_model_dir = '/s/chopin/d/proj/ramfis-aida/coref/coreference_and_annotations/cdlm/models/cdlm2/linear'
 
-def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device, batch_size=150):
+def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device, batch_size=15):
     parallel_model.eval()
     topic_scores = []
+    loc_mentions = []
+    #batch_size=1
 
     batch = [m_id_list[x] for x, y in m_id_list.items() ] #get the sentences from the pairwise m_id list 
     batch = [x for xs in batch  for x in xs] #make a flat list for cdlm model inputs
+    batch = batch[40000:-1]
+    
+    #print(batch)
+    print("batch creation", len(batch))
+
 
     bert_tokens = parallel_model.module.tokenizer(batch, pad_to_max_length=True,
                                                          add_special_tokens=False, truncation=False)
@@ -28,6 +35,58 @@ def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device,
     k = m == parallel_model.module.vals[0]
     p = m == parallel_model.module.vals[1]
 
+    v = (k.int() + p.int()).bool()
+    nz_indexes = v.nonzero()[:, 1].reshape(m.shape[0], 4)
+    loc_mentions.extend(nz_indexes.cpu().numpy())
+        
+        
+    overflow_idx = []
+    overflow_idx_diff = []
+    
+    for i, j in enumerate(loc_mentions):
+        #if j[3]-j[0] >= 4096 and j[3]>=4096 :
+        if j[3]-j[0] <= 4096 and j[3]>=4096 :
+            x = j[3]-j[0]
+            overflow_idx.append([i, j[3]])
+        if j[3]-j[0] > 4096 and j[3]>=4096 :
+            y = j[3]-j[0]
+            overflow_idx_diff.append([i,j[1], j[3]])
+
+    #cases where the last special token is outside of 4096 but difference is less than 4096 
+    idx = [x[0] for x in overflow_idx]
+    m_new = []
+    for i, j in enumerate(overflow_idx):
+        #bert_sent = bert_sentences[j[0]]
+        m_new.append(m[j[0],  j[1]-4096+1:j[1]+1])
+
+
+    m_new_tensor = torch.stack(m_new) 
+    m_new_tensor = F.pad(m_new_tensor, pad=(0, m.shape[1]-m_new_tensor.shape[1]), value=1)
+
+    #m[idx] = m_new_tensor
+    #cases where diff is more than 4096 and last token is > 4096 
+    
+    idx_diff = [x[0] for x in overflow_idx_diff]
+    m_new_start = []
+    m_new_end = []
+    for i, j in enumerate(overflow_idx_diff):
+
+        if j[1] >=2048:
+            m_new_start.append(m[j[0],  j[1]-2048+1:j[1]+1])
+        else:
+            m_new_start.append(m[j[0], 0:2048])
+
+        m_new_end.append(m[j[0],  j[2]-2048+1:j[2]+1])
+    start_tensor = torch.stack(m_new_start) 
+    end_tensor = torch.stack(m_new_end) 
+    concat_tensor= torch.cat([start_tensor, end_tensor], dim=1)
+    concat_tensor = F.pad(concat_tensor, pad=(0, m.shape[1]-concat_tensor.shape[1]), value=1)
+    concat_tensor= torch.cat([concat_tensor, m_new_tensor], dim=0) #concat the diff(>4096) between mentions along with no diff
+    idx_comb = idx_diff + idx
+
+    m[idx_comb] = concat_tensor
+    k = m == parallel_model.module.vals[0]
+    p = m == parallel_model.module.vals[1]
     v = (k.int() + p.int()).bool()
     nz_indexes = v.nonzero()[:, 1].reshape(m.shape[0], 4)
 
@@ -48,6 +107,8 @@ def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device,
 
     input_ids = input_ids[:, :4096]
     attention_mask = attention_mask[:, :4096]
+    attention_mask_g = attention_mask_g[:, :4096]
+
     # 1 because we are letting this token be attended globally,
     # not 2 because longformer issue resolved
     # https://github.com/huggingface/transformers/issues/7015
@@ -60,24 +121,28 @@ def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device,
     arg2 = arg2[:, :4096]
     arg1 = arg1.to(device)
     arg2 = arg2.to(device)
-      
+ 
+    
+    
 
-#     with torch.no_grad():
-#         scores = parallel_model(input_ids, attention_mask, arg1, arg2)
-#         #print(scores.shape)
-#         scores = torch.sigmoid(scores)
-#         topic_scores.extend(scores.detach().cpu().squeeze(1).numpy())
+
+
+# #     with torch.no_grad():
+# #         scores = parallel_model(input_ids, attention_mask, arg1, arg2)
+# #         #print(scores.shape)
+# #         scores = torch.sigmoid(scores)
+# #         topic_scores.extend(scores.detach().cpu().squeeze(1).numpy())
 
     
     # get the model outputs in batches
-    with torch.no_grad():
-        for i in tqdm(range(0, len(batch), batch_size), desc="generating "):
-            scores = parallel_model(input_ids[i:i+batch_size], attention_mask[i:i+batch_size],
-                                         arg1[i:i+batch_size], arg2[i:i+batch_size])
-            scores = torch.sigmoid(scores)
-            topic_scores.extend(scores.detach().cpu().squeeze(1).numpy())
+#     with torch.no_grad():
+#         for i in tqdm(range(0, len(batch), batch_size), desc="generating "):
+#             scores = parallel_model(input_ids[i:i+batch_size], attention_mask[i:i+batch_size],
+#                                          arg1[i:i+batch_size], arg2[i:i+batch_size])
+#             scores = torch.sigmoid(scores)
+#             topic_scores.extend(scores.detach().cpu().squeeze(1).numpy())
     
-    return topic_scores
+    return input_ids, attention_mask, arg1,arg2
 
 
 
@@ -232,7 +297,7 @@ def generate_cross_cdlm_embeddings(mention_pairs, mention_map, vec_map_path, key
     c=0
     for i in mention_pairs:
         #print(i)
-        instances = [' '.join(['<g>', "<doc-s>",mention_map[i[0]]['bert_sentence'], "</doc-s>", "<doc-s>",mention_map[i[1]]['bert_sentence'],"</doc-s>"
+        instances = [' '.join(['<g>', "<doc-s>",mention_map[i[0]][key_name], "</doc-s>", "<doc-s>",mention_map[i[1]][key_name],"</doc-s>"
                     
                     ])]
         
@@ -262,9 +327,12 @@ def generate_cross_cdlm_embeddings(mention_pairs, mention_map, vec_map_path, key
     
     
     
-    all_vectors = generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device, batch_size)
+    #all_vectors = generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device, batch_size)
+    input_ids, attention_mask, arg1,arg2  = generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device, batch_size)
     
-    m_ids = [x for x in m_id_list.keys() ] #get the sentences from the pairwise m_id list 
+    #m_ids = [x for x in m_id_list.keys() ] #get the sentences from the pairwise m_id list 
+    #m_ids = m_ids[0:50000]
     #batch = [x for xs in batch  for x in xs]
-    vec_map = {men_id: vec for men_id, vec in zip(m_ids, all_vectors)}
-    pickle.dump(vec_map, open(vec_map_path, 'wb'))
+    #vec_map = {men_id: vec for men_id, vec in zip(m_ids, all_vectors)}
+    #pickle.dump(vec_map, open(vec_map_path, 'wb'))
+    return input_ids, attention_mask, arg1,arg2
