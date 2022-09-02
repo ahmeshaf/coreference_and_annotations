@@ -12,6 +12,17 @@ action_seed_frames = {
     'Waking_up'  # Sleeper transitions from a state of consciousness
 }
 
+event_seed_frames = {
+    'Event',
+    'Transitive_action',  # Agent or Cause affecting a Patient
+    'Intentionally_act',  # Acts performed by sentient beings
+    'Getting',  # 'I got two whistles from John.'
+    'Go_into_shape',  # Non-agentive shape manipulation
+    'Misdeed',  # A Wrongdoer engages in a Misdeed
+    'Traversing',  # Theme changes location with respect to a salient location
+    'Waking_up'  # Sleeper transitions from a state of consciousness
+}
+
 
 def clean_parenthesis(name):
     name = name.split('_')[0]
@@ -104,7 +115,7 @@ def action_filter(lex_unit):
     if lex_unit.name.endswith('.v'):
         return True
     elif lex_unit.name.endswith('.n'):
-        agent_nouns = {'one', 'who', 'person', 'entity', 'someone', 'somebody'}
+        agent_nouns = {'one', 'who', 'person', 'entity', 'someone', 'somebody', 'native', 'inhabitant'}
 
         # some lex unit names have information like [entity], [person] etc.
         entity_names = set([f'[{word}]' for word in ['entity', 'item', 'person']])
@@ -114,7 +125,17 @@ def action_filter(lex_unit):
 
         # check if for 5 words in the definition of lex unit has an agent noun
         # presence of those words point to the lex unit being a role instead of action
-        agent_in_def = len(agent_nouns.intersection(lex_unit.definition.split()[:3])) > 0
+        definition = ' '.join([defin.strip() for defin in lex_unit.definition.split(':')[1:]])
+        agent_in_def = len(agent_nouns.intersection(definition.split()[:3])) > 0
+
+        # if the definition has a word ending in er in the second word
+        ends_in_er = sum([word.endswith('er') for word in definition.split()[:3]]) > 0
+
+        # check exemplars for  ====
+        has_eqs_exemplars = False
+        if len(lex_unit.exemplars) > 0:
+            eg = lex_unit.exemplars[0]
+            has_eqs_exemplars = "==" in eg.__str__()[-3*len(eg.text)+1:]
 
         # semType contains agentive sem type
         has_agentive_sem = len(agentive_sem_types.intersection([s.name for s in lex_unit.semTypes])) > 0
@@ -122,8 +143,12 @@ def action_filter(lex_unit):
         # has entity name in lex unit name
         has_entity_in_name = sum([name in lex_unit.name for name in entity_names]) > 0
 
+        # has an incorporated FE
+        has_incorporate_FE = 'incorporatedFE' in lex_unit
+
         # ! (A or B or C) == !A and !B and !C
-        return not (agent_in_def or has_agentive_sem or has_entity_in_name)
+        return not (agent_in_def or ends_in_er or has_agentive_sem or \
+            has_entity_in_name or has_incorporate_FE or has_eqs_exemplars)
     else:    # adjective/adverbs/etc
         return False
 
@@ -156,6 +181,33 @@ def get_action_lexical_units_fn(action_seeds):
                 lu_list.append((get_lexeme_fn(lex_unit), f_name, lex_unit.name))
 
     return lu_list
+
+
+def get_framenet_frames(seed_frames=None):
+    """
+
+    Parameters
+    ----------
+    seed_frames
+
+    Returns
+    -------
+
+    """
+    if seed_frames is None:
+        seed_frames = event_seed_frames
+    lus = get_action_lexical_units_fn(seed_frames)
+    lemma2_frames = {
+        'v': {}, 'n': {}
+    }
+
+    for lexeme, f_name, _ in lus:
+        lemma, pos = lexeme.split('.')
+        if lemma not in lemma2_frames[pos]:
+            lemma2_frames[pos][lemma] = []
+        lemma2_frames[pos][lemma].append(f_name)
+
+    return lemma2_frames
 
 
 if __name__ == '__main__':
