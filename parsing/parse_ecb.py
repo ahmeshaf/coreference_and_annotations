@@ -222,6 +222,9 @@ def add_lexical_features(nlp, mention_map):
         # get mention span
         mention_span = doc[mention['start']:mention['end']+1]
 
+        if mention_span.text == 'hearing':
+            print(mention_span.root.lemma_)
+
         # add char spans of root
         root_index = mention_span.root.i
         root_span = doc[root_index:root_index+1]
@@ -233,6 +236,9 @@ def add_lexical_features(nlp, mention_map):
 
         # lemma_start and end chars
         mention['pos'] = mention_span.root.pos_
+
+        # sentence tokens
+        mention['sentence_tokens'] = [w.lemma_.lower() for w in doc if not (w.is_stop or w.is_punct)]
 
 
 if __name__ == '__main__':

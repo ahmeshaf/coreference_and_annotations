@@ -23,11 +23,13 @@ def run_coreference(ann_dir, working_folder, men_type='evt', split='dev'):
     if not os.path.exists(ecb_mention_map_path):
         parse_annotations(ann_dir, working_folder)
     ecb_mention_map = pickle.load(open(ecb_mention_map_path, 'rb'))
+    for key, val in ecb_mention_map.items():
+        val['mention_id'] = key
 
     curr_mention_map = {m_id: val for m_id, val in ecb_mention_map.items() if val['men_type'] == men_type and
                                                     val['split'] == split}
 
-    coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type)
+    coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type, cluster_algo='cc', threshold=0.8)
 
 
 ann_dir = "/Users/rehan/workspace/data/ECB+_LREC2014"

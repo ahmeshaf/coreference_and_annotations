@@ -7,6 +7,14 @@ from copy import copy
 class Cluster:
     """
     A class of cluster of mentions
+
+    Attributes
+    ----------
+    mention_dicts: list of mention dicts
+    doc_ids: set of doc ids of the mentions
+    topic: str Topic ID
+    gold_cluster: str cluster ID from annotations
+    id_: id  unique ID for hashing the cluster
     """
     def __init__(self, mention_dict):
         self.mention_dicts = [mention_dict]
@@ -57,14 +65,14 @@ class Clustering:
 
     def load_state(self, other):
         """
-
+        load the attributes from a pickled class
         Parameters
         ----------
         other: Clustering
 
         Returns
         -------
-
+        None
         """
         self.mentions = other.mentions
         self.lemma2clusters = copy(other.lemma2clusters)
@@ -72,21 +80,21 @@ class Clustering:
         self.clusters = copy(other.clusters)
         self.comparisons = copy(other.comparisons)
 
-    def candidates(self, mention_dict):
+    def candidates(self, target_mention):
         """
-
+        Find a list of candidate Clusters for a target mention
         Parameters
         ----------
-        mention_dict: dict
+        target_mention: dict
 
         Returns
         -------
         list[Cluster]
         """
-        topic = mention_dict['topic']
-        lemma = mention_dict['lemma']
-        frames = mention_dict['frames']
-        sent_tokens = mention_dict['sentence']
+        topic = target_mention['topic']
+        lemma = target_mention['lemma']
+        # frames = target_mention['frames']
+        sent_tokens = target_mention['sentence']
 
         candidates = set()
         candidates.update(self.lemma2clusters[lemma])
@@ -104,7 +112,7 @@ class Clustering:
 
         men_id = mention_dict['mention_id']
 
-        # sim values
+        # sim values by taking the max sim between the target and mentions of candidate
         similarities = [
             max([similarity_matrix[men2id[men_id], men2id[m['mention_id']]] for m in clus.mention_dicts])
             for clus in possible_clusters
@@ -117,7 +125,8 @@ class Clustering:
     def update_cluster_maps(self, cluster, mention_dict):
         lemma = mention_dict['lemma']
         sent_tokens = mention_dict['sentence_tokens']
-        frames = mention_dict['frames']
+        # frames = mention_dict['frames']
+        frames = []
         self.lemma2clusters[lemma].add(cluster)
         for frame in frames:
             if frame is not None and frame != '':
@@ -135,7 +144,7 @@ class Clustering:
         self.update_cluster_maps(cluster, mention_dict)
 
     def run_clustering(self, mention_map, men2id, similarity_matrix,
-                       top_n=100, threshold=0.8, simulation=False,
+                       top_n=100, threshold=0.1, simulation=False,
                        random_run=False):
         while len(self.mentions) > 0:
             mention = self.mentions.pop(0)
@@ -189,7 +198,6 @@ def incremental_clustering(similarity_matrix, threshold, mentions, mention_map, 
     clustering = Clustering(mentions)
     clusters, mention_clus_map = clustering.run_clustering(mention_map, men2id, similarity_matrix,
                                                            threshold=threshold, simulation=False)
-
     # order the labels according to the mentions
     labels = [mention_clus_map[men] for men in mentions]
 

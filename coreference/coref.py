@@ -90,9 +90,17 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
         men1, men2 = pair
         men_map1 = mention_map[men1]
         men_map2 = mention_map[men2]
-        men_text1 = men_map1['mention_text']
-        men_text2 = men_map2['mention_text']
-        similarities.append(int(men_text1 == men_text2))
+        men_text1 = men_map1['mention_text'].lower()
+        men_text2 = men_map2['mention_text'].lower()
+
+        def jc(arr1, arr2):
+            return len(set.intersection(arr1, arr2))/len(set.union(arr1, arr2))
+
+        if men_map1['lemma'] in men_text2 or men_map2['lemma'] in men_text1:
+            # similarities.append(jc(set(men_map1['sentence_tokens']), set(men_map2['sentence_tokens'])))
+            similarities.append(1.)
+        else:
+            similarities.append(0.)
 
     return similarities
 
@@ -244,18 +252,18 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
         os.makedirs(working_folder)
 
     # extract the mention maps
-    eve_mention_map, ent_mention_map, relations, doc_sent_map = extract_mentions(ann_dir, source_dir, working_folder)
+    mention_map, doc_sent_map = extract_mentions(ann_dir, source_dir, working_folder)
 
-    # which coreference mention map
-    if men_type == 'evt':
-        curr_mention_map = eve_mention_map
-    else:
-        curr_mention_map = ent_mention_map
+    curr_mention_map = {key: val for key, val in mention_map.items() if val['men_type'] == men_type}
 
-    # create a single dict for all mentions
-    all_mention_map = {**eve_mention_map, **ent_mention_map}
+    # do some filtering:
+    curr_mention_map_new = {}
+    for key, mention in curr_mention_map.items():
+        mention_text = mention['mention_text']
+        if len(mention_text.strip()) > 2 and len(mention_text.split()) < 4:
+            curr_mention_map_new[key] = mention
 
-    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations,
+    coreference(curr_mention_map_new, mention_map, working_folder, men_type, None,
                 sim_type='lemma', cluster_algo='inc')
 
 
