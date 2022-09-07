@@ -1,4 +1,3 @@
-
 # Author: Rehan and Abhijnan
 import pickle
 import pyhocon
@@ -199,7 +198,6 @@ def generate_cdlm_embeddings_from_model_cross(parallel_model, m_id_list, device,
 
 def generate_cdlm_embeddings_from_model(parallel_model, m_id_list, device, batch_size=150):
     """
-
     Parameters
     ----------
     parallel_model: Parallel Model
@@ -207,7 +205,6 @@ def generate_cdlm_embeddings_from_model(parallel_model, m_id_list, device, batch
         list of sentences with mentions surrounded by <m> and </m>
     device: torch.device
     batch_size: int
-
     Returns
     -------
         arr of vectors
@@ -311,28 +308,21 @@ def generate_cross_cdlm_embeddings(mention_pairs, mention_map, vec_map_path, key
    
     """
     Generate cdlm embeddings of the mentions in the cdlm format
-
     Parameters
     ----------
-
     mention_map: dict
         Mention map containing the documents with their mention IDs
-
     vec_map_path: str
         Path to store vector maps 
         
     key_name : str
         Whether shorter sentences or longer whole documents with special mention tokens
-
     num_gpus: int
         Number of gpus to use
-
     batch_size:
         Batch size
-
     cpu: bool
         If we want to use cpu instead of gpus
-
     Returns
     -------
     tensors
