@@ -8,5 +8,15 @@ scipy==1.8.0
 six==1.16.0
 soupsieve==2.3.2
 
-spacy~=3.2.3
+spacy~=3.3.1
 scikit-learn~=1.0.2
+nltk~=3.7
+tqdm~=4.63.0
+pulp~=2.6.0
+prodigy~=1.11.7
+wasabi~=0.9.1
+sklearn~=0.0
+torch~=1.7.1
+pyhocon~=0.3.59
+transformers~=4.2.2
+rapidfuzz~=2.1.2

@@ -30,11 +30,18 @@ def run_coreference(ann_dir, working_folder, men_type='evt', split='train'):
                                                     val['split'] == split}
 
     simulation = True
-    coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type,
-                cluster_algo='inc', threshold=0.1, simulation=simulation, top_n=3)
+    inc_clusterer = coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type,
+                                cluster_algo='inc', threshold=0.1, simulation=simulation, top_n=3)
+
+    with open(working_folder + f'/trivial_non_trivial_{split}.csv', 'w') as tnf:
+        tnf.write(
+            '\n'.join([
+                ','.join(row) for row in inc_clusterer.trivial_non_trivial
+            ])
+        )
 
 
 ann_dir = "/Users/rehan/workspace/data/ECB+_LREC2014"
 working_folder = "../parsing/ecb"
 
-run_coreference(ann_dir, working_folder)
+run_coreference(ann_dir, working_folder, split='test')

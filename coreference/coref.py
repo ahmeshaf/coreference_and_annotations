@@ -259,13 +259,6 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
                                                                           curr_mentions, all_mention_map,
                                                                           curr_men_to_ind, simulation=simulation,
                                                                           top_n=top_n)
-            with open(working_folder + '/trivial_non_trivial.csv', 'w') as tnf:
-                tnf.write(
-                    '\n'.join([
-                        ','.join(row) for row in inc_clusterer.trivial_non_trivial
-                    ])
-                )
-
     else:
         raise AssertionError
     system_mention_cluster_map = [(men, clus) for men, clus in zip(curr_mentions, labels)]
@@ -277,8 +270,8 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
     # evaluate
     generate_results(gold_key_file, system_key_file)
 
-    if simulation:
-        return inc_clusterer.get_simulation_metrics()
+    if simulation and cluster_algo == 'inc':
+        return inc_clusterer
 
 
 def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):

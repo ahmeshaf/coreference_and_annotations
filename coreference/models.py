@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch
-from transformers import *
+from transformers import LongformerModel, LongformerTokenizer, AutoModel, AutoTokenizer
 import numpy as np
 import pyhocon
 import os
@@ -9,13 +9,70 @@ import os
 
 config_file_path = os.path.dirname(__file__) + '/../cdlm/config_pairwise_long_reg_span.json'
 config = pyhocon.ConfigFactory.parse_file(config_file_path)
-print(config.cdlm_path)
+# print(config.cdlm_path)
 
 
 def init_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.xavier_uniform_(m.weight)
         nn.init.uniform_(m.bias)
+
+
+class LongFormerCrossEncoder(nn.Module):
+    def __init__(self, is_training=True, long=True, model_name='allenai/longformer-base-4096',
+                 linear_weights=None):
+        super(LongFormerCrossEncoder, self).__init__()
+        self.tokenizer = LongformerTokenizer.from_pretrained(model_name)
+
+        if is_training:
+            self.tokenizer.add_tokens(['<m>', '</m>'], special_tokens=True)
+            self.tokenizer.add_tokens(['<doc-s>', '</doc-s>'], special_tokens=True)
+            self.tokenizer.add_tokens(['<g>'], special_tokens=True)
+            self.model = LongformerModel.from_pretrained(model_name)
+            self.model.resize_token_embeddings(len(self.tokenizer))
+        else:
+            self.model = LongformerModel.from_pretrained(model_name)
+
+        self.start_id = self.tokenizer.encode('<m>', add_special_tokens=False)[0]
+        self.end_id = self.tokenizer.encode('</m>', add_special_tokens=False)[0]
+
+        self.hidden_size = self.model.config.hidden_size
+        if not self.long:
+            self.linear = nn.Sequential(
+                nn.Linear(self.hidden_size, 128),
+                nn.ReLU(),
+                nn.Linear(128, 1),
+                nn.Sigmoid()
+            )
+        else:
+            self.linear = nn.Sequential(
+                nn.Linear(self.hidden_size * 4, self.hidden_size),
+                nn.Tanh(),
+                nn.Linear(self.hidden_size, 128),
+                nn.Tanh(),
+                nn.Linear(128, 1),
+                nn.Sigmoid()
+            )
+
+        if linear_weights is None:
+            self.linear.apply(init_weights)
+        else:
+            self.linear.load_state_dict(linear_weights)
+
+    def forward(self, input_ids, attention_mask=None, global_attention_mask=None, arg1=None, arg2=None):
+        output = self.model(input_ids, attention_mask=attention_mask, global_attention_mask=global_attention_mask)
+
+        arg1_vec = (output[0] * arg1.unsqueeze(-1)).sum(1)
+        arg2_vec = (output[0] * arg2.unsqueeze(-1)).sum(1)
+        # cls_vector = output[:, 0, :]
+        # changed by Abhijnan to catch the tuple output in the right format, i.e. first element
+        cls_vector = output[0][:, 0, :]
+        if not self.long:
+            scores = self.linear(cls_vector)
+        else:
+            scores = self.linear(torch.cat([cls_vector, arg1_vec, arg2_vec, arg1_vec * arg2_vec], dim=1))
+        # return output #debugging
+        return scores
 
 
 class FullCrossEncoder(nn.Module):
@@ -52,8 +109,8 @@ class FullCrossEncoder(nn.Module):
             )
         self.linear.apply(init_weights)
 
-    def forward(self, input_ids, attention_mask=None, arg1=None, arg2=None):
-        output = self.model(input_ids, attention_mask=attention_mask)
+    def forward(self, input_ids, attention_mask=None, global_attention_mask=None, arg1=None, arg2=None):
+        output = self.model(input_ids, attention_mask=attention_mask, global_attention_mask=global_attention_mask)
 
         arg1_vec = (output[0]*arg1.unsqueeze(-1)).sum(1)
         arg2_vec = (output[0]*arg2.unsqueeze(-1)).sum(1)
@@ -71,6 +128,34 @@ class FullCrossEncoder(nn.Module):
         output, _ = self.model(input_ids, attention_mask=attention_mask)
         arg1_vec = (output*arg1.unsqueeze(-1)).sum(1)
         return arg1_vec
+
+
+class FullCrossEncoderSymmetric(FullCrossEncoder):
+    def __init__(self, config, is_training=True, long=False):
+        super(FullCrossEncoderSymmetric, self).__init__(config, is_training, long)
+
+    def forward(self, inputs, attention_masks, arg1s, arg2s):
+        """
+        Symmetric forward function
+        Parameters
+        ----------
+        inputs: tuple
+        attention_masks: tuple
+        arg1s: tuple
+        arg2s: tuple
+
+        Returns
+        -------
+        Tensor, Tensor
+        """
+        #
+        input_ab, attention_mask_ab, arg1_ab, arg2_ab = (inputs[0], attention_masks[0], arg1s[0], arg2s[0])
+        input_ba, attention_mask_ba, arg1_ba, arg2_ba = (inputs[1], attention_masks[1], arg1s[1], arg2s[1])
+
+        ab_scores = super(FullCrossEncoderSymmetric, self).forward(input_ab, attention_mask_ab, arg1_ab, arg2_ab)
+        ba_scores = super(FullCrossEncoderSymmetric, self).forward(input_ba, attention_mask_ba, arg1_ba, arg2_ba)
+
+        return ab_scores, ba_scores
 
 
 class FullCrossEncoderSingle(nn.Module):
