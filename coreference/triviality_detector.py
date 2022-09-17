@@ -2,7 +2,7 @@ import os.path
 
 from sklearn.model_selection import train_test_split
 import pyhocon
-from models import LongFormerCrossEncoder
+from coreference.models import LongFormerCrossEncoder
 import torch
 import random
 from tqdm.autonotebook import tqdm
@@ -13,21 +13,21 @@ def accuracy(predicted_labels, true_labels):
     """
     Accuracy is correct predictions / all predicitons
     """
-    return sum(predicted_labels == true_labels)/len(predicted_labels)
+    return sum(predicted_labels == true_labels) / len(predicted_labels)
 
 
 def precision(predicted_labels, true_labels):
     """
     Precision is True Positives / All Positives Predictions
     """
-    return sum(torch.logical_and(predicted_labels, true_labels))/sum(predicted_labels)
+    return sum(torch.logical_and(predicted_labels, true_labels)) / sum(predicted_labels)
 
 
 def recall(predicted_labels, true_labels):
     """
     Recall is True Positives / All Positive Labels
     """
-    return sum(torch.logical_and(predicted_labels, true_labels))/sum(true_labels)
+    return sum(torch.logical_and(predicted_labels, true_labels)) / sum(true_labels)
 
 
 def f1_score(predicted_labels, true_labels):
@@ -36,7 +36,7 @@ def f1_score(predicted_labels, true_labels):
     """
     P = precision(predicted_labels, true_labels)
     R = recall(predicted_labels, true_labels)
-    return 2*P*R/(P+R)
+    return 2 * P * R / (P + R)
 
 
 def load_data(trivial_non_trivial_path):
@@ -45,7 +45,7 @@ def load_data(trivial_non_trivial_path):
         for line in tnf:
             row = line.strip().split(',')
             mention_pair = row[:2]
-            triviality_label = row[2]
+            triviality_label = int(row[2])
             all_examples.append((mention_pair, triviality_label))
 
     return all_examples
@@ -59,7 +59,7 @@ def print_label_distri(labels):
         label_count[label] += 1
 
     print(len(labels))
-    label_count_ratio = {label: val/len(labels) for label, val in label_count.items()}
+    label_count_ratio = {label: val / len(labels) for label, val in label_count.items()}
     return label_count_ratio
 
 
@@ -88,8 +88,13 @@ def tokenize(tokenizer, mention_pairs, mention_map):
         instance_ba = make_instance(sentence_b, sentence_a)
         pairwise_bert_instances_ba.append(instance_ba)
 
-    return (tokenizer(pairwise_bert_instances_ab, pad_to_max_length=True, add_special_tokens=False, truncation=False),
-            tokenizer(pairwise_bert_instances_ba, pad_to_max_length=True, add_special_tokens=False, truncation=False))
+    tokenized_ab = tokenizer(pairwise_bert_instances_ab, pad_to_max_length=True, add_special_tokens=False,
+                             truncation=False)
+    tokenized_ba = tokenizer(pairwise_bert_instances_ba, pad_to_max_length=True, add_special_tokens=False,
+                             truncation=False)
+
+    return (torch.LongTensor(tokenized_ab['input_ids']), torch.LongTensor(tokenized_ab['attention_mask'])), (
+    torch.LongTensor(tokenized_ba['input_ids']), torch.LongTensor(tokenized_ba['attention_mask']))
 
 
 def get_arg_attention_mask(input_ids, parallel_model):
@@ -147,21 +152,29 @@ def get_arg_attention_mask(input_ids, parallel_model):
     return attention_mask_g, arg1, arg2
 
 
-def predict(parallel_model, device, tensor_ab, tensor_ba, batch_size):
+def predict(parallel_model, device, tensor_ab, tensor_ba, am_ab, am_ba, batch_size):
     n = tensor_ab.shape[0]
     predictions = []
     with torch.no_grad():
         for i in tqdm(range(0, n, batch_size), desc='Predicting'):
-            batch_ab = tensor_ab[i:i+batch_size, :]
-            batch_ba = tensor_ba[i:i+batch_size, :]
+            batch_tensor_ab = tensor_ab[i:i + batch_size, :]
+            batch_tensor_ba = tensor_ba[i:i + batch_size, :]
 
-            batch_ab.to(device)
-            batch_ba.to(device)
+            batch_am_ab = am_ab[i:i + batch_size, :]
+            batch_am_ba = am_ba[i:i + batch_size, :]
 
-            scores_ab = parallel_model(batch_ab)
-            scores_ba = parallel_model(batch_ba)
+            am_g_ab, arg1_ab, arg2_ab = get_arg_attention_mask(batch_tensor_ab, parallel_model)
+            am_g_ba, arg1_ba, arg2_ba = get_arg_attention_mask(batch_tensor_ba, parallel_model)
 
-            scores_mean = (scores_ab + scores_ba)/2
+            batch_tensor_ab.to(device)
+            batch_tensor_ba.to(device)
+
+            scores_ab = parallel_model(batch_tensor_ab, attention_mask=batch_am_ab,
+                                       global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab)
+            scores_ba = parallel_model(batch_tensor_ba, attention_mask=batch_am_ba,
+                                       global_attention_mask=am_g_ba, arg1=arg1_ba, arg2=arg2_ba)
+
+            scores_mean = (scores_ab + scores_ba) / 2
 
             batch_predictions = (scores_mean > 0.5).detach().cpu()
             predictions.append(batch_predictions)
@@ -181,7 +194,6 @@ def train(train_pairs,
           n_iters=10,
           lr_lm=0.00001,
           lr_class=0.001):
-
     bce_loss = torch.nn.BCELoss()
     mse_loss = torch.nn.MSELoss()
 
@@ -196,8 +208,11 @@ def train(train_pairs,
     tokenizer = parallel_model.module.tokenizer
 
     # prepare data
-    train_tensor_ab, train_tensor_ba = tokenize(tokenizer, train_pairs, mention_map)
-    dev_tensor_ab, dev_tensor_ba = tokenize(tokenizer, dev_pairs, mention_map)
+    (train_tensor_ab, train_am_ab), (train_tensor_ba, train_am_ba) = tokenize(tokenizer, train_pairs, mention_map)
+    (dev_tensor_ab, dev_am_ab), (dev_tensor_ba, dev_am_ba) = tokenize(tokenizer, dev_pairs, mention_map)
+
+    print(train_tensor_ab.shape)
+    print(train_am_ab.shape)
 
     # labels
     train_labels = torch.FloatTensor(train_labels)
@@ -207,22 +222,31 @@ def train(train_pairs,
         train_indices = list(range(len(train_pairs)))
         random.shuffle(train_indices)
         iteration_loss = 0.
-        for i in range(0, len(train_indices), batch_size):
+        for i in tqdm(range(0, len(train_indices), batch_size), desc='Training'):
             optimizer.zero_grad()
-            batch_indices = train_indices[i: i+batch_size]
+            batch_indices = train_indices[i: i + batch_size]
 
             batch_tensor_ab, batch_tensor_ba = (
-                train_tensor_ab[batch_indices, :], train_tensor_ab[batch_indices, :]
+                train_tensor_ab[batch_indices, :], train_tensor_ba[batch_indices, :]
             )
+
+            batch_am_ab, batch_am_ba = (
+                train_am_ab[batch_indices, :], train_am_ba[batch_indices, :]
+            )
+
+            am_g_ab, arg1_ab, arg2_ab = get_arg_attention_mask(batch_tensor_ab, parallel_model)
+            am_g_ba, arg1_ba, arg2_ba = get_arg_attention_mask(batch_tensor_ba, parallel_model)
 
             batch_labels = train_labels[batch_indices].to(device)
             batch_tensor_ab.to(device)
             batch_tensor_ba.to(device)
 
-            scores_ab = parallel_model(batch_tensor_ab)
-            scores_ba = parallel_model(batch_tensor_ba)
+            scores_ab = parallel_model(batch_tensor_ab, attention_mask=batch_am_ab,
+                                       global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab)
+            scores_ba = parallel_model(batch_tensor_ba, attention_mask=batch_am_ba,
+                                       global_attention_mask=am_g_ba, arg1=arg1_ba, arg2=arg2_ba)
 
-            scores_mean = (scores_ab + scores_ba)/2
+            scores_mean = (scores_ab + scores_ba) / 2
 
             loss = bce_loss(torch.squeeze(scores_mean), batch_labels) + mse_loss(scores_ab, scores_ba)
 
@@ -232,18 +256,30 @@ def train(train_pairs,
 
             iteration_loss += loss.item()
 
-        print(f'Iteration {n} Loss:', iteration_loss/len(train_pairs))
+        print(f'Iteration {n} Loss:', iteration_loss / len(train_pairs))
         # iteration accuracy
-        dev_predictions = predict(parallel_model, device, dev_tensor_ab, dev_tensor_ba, batch_size)
+        dev_predictions = predict(parallel_model, device, dev_tensor_ab, dev_tensor_ba, dev_am_ab, dev_am_ba,
+                                  batch_size)
+        dev_predictions = torch.squeeze(dev_predictions)
+        print(dev_predictions.shape)
         print(accuracy(dev_predictions, dev_labels))
         print(f1_score(dev_predictions, dev_labels))
+
+        scorer_folder = working_folder + f'/scorer/chk_{n}'
+        if not os.path.exists(scorer_folder):
+            os.makedirs(scorer_folder)
+        model_path = scorer_folder + '/linear.chkpt'
+        torch.save(parallel_model.module.linear.state_dict(), model_path)
+        parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
+        parallel_model.module.model.tokenizer.save_pretrained(scorer_folder + '/bert')
 
     scorer_folder = working_folder + '/scorer/'
     if not os.path.exists(scorer_folder):
         os.makedirs(scorer_folder)
-    model_path = working_folder + scorer_folder + '/linear.chkpt'
+    model_path = scorer_folder + '/linear.chkpt'
     torch.save(parallel_model.module.linear.state_dict(), model_path)
     parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
+    parallel_model.module.model.tokenizer.save_pretrained(scorer_folder + '/bert')
 
 
 if __name__ == '__main__':

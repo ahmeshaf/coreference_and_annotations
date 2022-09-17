@@ -9,6 +9,8 @@ import os
 
 config_file_path = os.path.dirname(__file__) + '/../cdlm/config_pairwise_long_reg_span.json'
 config = pyhocon.ConfigFactory.parse_file(config_file_path)
+
+
 # print(config.cdlm_path)
 
 
@@ -23,6 +25,7 @@ class LongFormerCrossEncoder(nn.Module):
                  linear_weights=None):
         super(LongFormerCrossEncoder, self).__init__()
         self.tokenizer = LongformerTokenizer.from_pretrained(model_name)
+        self.long = long
 
         if is_training:
             self.tokenizer.add_tokens(['<m>', '</m>'], special_tokens=True)
@@ -101,7 +104,7 @@ class FullCrossEncoder(nn.Module):
             )
         else:
             self.linear = nn.Sequential(
-                nn.Linear(self.hidden_size*4, self.hidden_size),
+                nn.Linear(self.hidden_size * 4, self.hidden_size),
                 nn.ReLU(),
                 nn.Linear(self.hidden_size, 128),
                 nn.ReLU(),
@@ -112,21 +115,21 @@ class FullCrossEncoder(nn.Module):
     def forward(self, input_ids, attention_mask=None, global_attention_mask=None, arg1=None, arg2=None):
         output = self.model(input_ids, attention_mask=attention_mask, global_attention_mask=global_attention_mask)
 
-        arg1_vec = (output[0]*arg1.unsqueeze(-1)).sum(1)
-        arg2_vec = (output[0]*arg2.unsqueeze(-1)).sum(1)
+        arg1_vec = (output[0] * arg1.unsqueeze(-1)).sum(1)
+        arg2_vec = (output[0] * arg2.unsqueeze(-1)).sum(1)
         # cls_vector = output[:, 0, :]
         # changed by Abhijnan to catch the tuple output in the right format, i.e. first element
         cls_vector = output[0][:, 0, :]
         if not self.long:
             scores = self.linear(cls_vector)
         else:
-            scores = self.linear(torch.cat([cls_vector, arg1_vec, arg2_vec, arg1_vec*arg2_vec], dim=1))
+            scores = self.linear(torch.cat([cls_vector, arg1_vec, arg2_vec, arg1_vec * arg2_vec], dim=1))
         # return output #debugging
         return scores
 
-    def generate_rep(self, input_ids, attention_mask=None, arg1=None,):
+    def generate_rep(self, input_ids, attention_mask=None, arg1=None, ):
         output, _ = self.model(input_ids, attention_mask=attention_mask)
-        arg1_vec = (output*arg1.unsqueeze(-1)).sum(1)
+        arg1_vec = (output * arg1.unsqueeze(-1)).sum(1)
         return arg1_vec
 
 
@@ -163,7 +166,7 @@ class FullCrossEncoderSingle(nn.Module):
     This module is derived from FullCrossEncoder.
     The purpose of this module is to be able to generate the embedding for a mention individually with CDLM
     """
-  
+
     def __init__(self, config, is_training=True, long=False):
         super(FullCrossEncoderSingle, self).__init__()
         self.segment_size = config.segment_window * 2
@@ -210,6 +213,7 @@ class Regressor(nn.Module):
     """
     NN module of the regressor over similarity features
     """
+
     def __init__(self, feature_len):
         """
 
@@ -239,3 +243,4 @@ class Regressor(nn.Module):
         out = self.linear2(out)
         out = torch.sigmoid(out)
         return out
+
