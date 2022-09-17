@@ -279,7 +279,7 @@ def train(train_pairs,
     model_path = scorer_folder + '/linear.chkpt'
     torch.save(parallel_model.module.linear.state_dict(), model_path)
     parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
-    parallel_model.module.model.tokenizer.save_pretrained(scorer_folder + '/bert')
+    parallel_model.module.tokenizer.save_pretrained(scorer_folder + '/bert')
 
 
 if __name__ == '__main__':
