@@ -289,7 +289,7 @@ if __name__ == '__main__':
     train_pairs, train_labels = zip(*load_data(triv_train_path))
     dev_pairs, dev_labels = zip(*load_data(triv_dev_path))
 
-    device = torch.device('cpu')
+    device = torch.device('cuda:0')
 
     scorer_module = LongFormerCrossEncoder(is_training=True).to(device)
     device_ids = [0, 1]
@@ -315,5 +315,6 @@ if __name__ == '__main__':
           parallel_model,
           ecb_mention_map,
           working_folder,
-          device)
+          device, batch_size=32, lr_class=0.00001, lr_lm=0.000001,
+          n_iters=100)
 
