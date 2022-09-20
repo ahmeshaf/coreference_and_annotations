@@ -68,9 +68,10 @@ def split_data(all_examples, dev_ratio=0.2):
     return train_test_split(pairs, labels, test_size=dev_ratio)
 
 
-def tokenize(tokenizer, mention_pairs, mention_map, m_end):
+def tokenize(tokenizer, mention_pairs, mention_map, m_end, max_sentence_len=None):
 
-    max_sentence_len = tokenizer.model_max_length
+    if max_sentence_len is None:
+        max_sentence_len = tokenizer.model_max_length
 
     pairwise_bert_instances_ab = []
     pairwise_bert_instances_ba = []
