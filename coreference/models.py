@@ -63,9 +63,8 @@ class LongFormerCrossEncoder(nn.Module):
         else:
             self.linear.load_state_dict(linear_weights)
 
-    def forward(self, input_ids, attention_mask=None, position_ids=None,
-                global_attention_mask=None, arg1=None, arg2=None):
-
+    def generate_output(self, input_ids, attention_mask=None, position_ids=None,
+                        global_attention_mask=None, arg1=None, arg2=None):
         arg_names = set(getfullargspec(self.model).args)
 
         if 'global_attention_mask' in arg_names:
@@ -78,17 +77,27 @@ class LongFormerCrossEncoder(nn.Module):
                                 position_ids=position_ids,
                                 attention_mask=attention_mask)
 
-        arg1_vec = (output[0] * arg1.unsqueeze(-1)).sum(1)
-        arg2_vec = (output[0] * arg2.unsqueeze(-1)).sum(1)
-        # cls_vector = output[:, 0, :]
-        # changed by Abhijnan to catch the tuple output in the right format, i.e. first element
-        cls_vector = output[0][:, 0, :]
+        last_hidden_states = output.last_hidden_state
+        cls_vector = output.pooler_output
+
+        arg1_vec = (last_hidden_states * arg1.unsqueeze(-1)).sum(1)
+        arg2_vec = (last_hidden_states * arg2.unsqueeze(-1)).sum(1)
+
         if not self.long:
-            scores = self.linear(cls_vector)
+            return cls_vector
         else:
-            scores = self.linear(torch.cat([cls_vector, arg1_vec, arg2_vec, arg1_vec * arg2_vec], dim=1))
-        # return output #debugging
-        return scores
+            return torch.cat([cls_vector, arg1_vec, arg2_vec, arg1_vec * arg2_vec], dim=1)
+
+    def frozen_forward(self, input_):
+        return self.linear(input_)
+
+    def forward(self, input_ids, attention_mask=None, position_ids=None,
+                global_attention_mask=None, arg1=None, arg2=None):
+        lm_output = self.generate_output(input_ids, attention_mask=attention_mask,
+                                         global_attention_mask=global_attention_mask,
+                                         position_ids=position_ids,
+                                         arg1=arg1, arg2=arg2)
+        return self.linear(lm_output)
 
 
 class FullCrossEncoder(nn.Module):
