@@ -4,6 +4,7 @@ from transformers import LongformerModel, LongformerTokenizer, AutoModel, AutoTo
 import numpy as np
 import pyhocon
 import os
+from inspect import getfullargspec
 
 # relative path of config file
 
@@ -24,17 +25,17 @@ class LongFormerCrossEncoder(nn.Module):
     def __init__(self, is_training=True, long=True, model_name='allenai/longformer-base-4096',
                  linear_weights=None):
         super(LongFormerCrossEncoder, self).__init__()
-        self.tokenizer = LongformerTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.long = long
 
         if is_training:
             self.tokenizer.add_tokens(['<m>', '</m>'], special_tokens=True)
             self.tokenizer.add_tokens(['<doc-s>', '</doc-s>'], special_tokens=True)
             self.tokenizer.add_tokens(['<g>'], special_tokens=True)
-            self.model = LongformerModel.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
             self.model.resize_token_embeddings(len(self.tokenizer))
         else:
-            self.model = LongformerModel.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
 
         self.start_id = self.tokenizer.encode('<m>', add_special_tokens=False)[0]
         self.end_id = self.tokenizer.encode('</m>', add_special_tokens=False)[0]
@@ -62,8 +63,20 @@ class LongFormerCrossEncoder(nn.Module):
         else:
             self.linear.load_state_dict(linear_weights)
 
-    def forward(self, input_ids, attention_mask=None, global_attention_mask=None, arg1=None, arg2=None):
-        output = self.model(input_ids, attention_mask=attention_mask, global_attention_mask=global_attention_mask)
+    def forward(self, input_ids, attention_mask=None, position_ids=None,
+                global_attention_mask=None, arg1=None, arg2=None):
+
+        arg_names = set(getfullargspec(self.model).args)
+
+        if 'global_attention_mask' in arg_names:
+            output = self.model(input_ids,
+                                position_ids=position_ids,
+                                attention_mask=attention_mask,
+                                global_attention_mask=global_attention_mask)
+        else:
+            output = self.model(input_ids,
+                                position_ids=position_ids,
+                                attention_mask=attention_mask)
 
         arg1_vec = (output[0] * arg1.unsqueeze(-1)).sum(1)
         arg2_vec = (output[0] * arg2.unsqueeze(-1)).sum(1)
@@ -112,8 +125,12 @@ class FullCrossEncoder(nn.Module):
             )
         self.linear.apply(init_weights)
 
-    def forward(self, input_ids, attention_mask=None, global_attention_mask=None, arg1=None, arg2=None):
-        output = self.model(input_ids, attention_mask=attention_mask, global_attention_mask=global_attention_mask)
+    def forward(self, input_ids, position_ids=None, attention_mask=None,
+                global_attention_mask=None, arg1=None, arg2=None):
+        output = self.model(input_ids,
+                            attention_mask=attention_mask,
+                            position_id=position_ids,
+                            global_attention_mask=global_attention_mask)
 
         arg1_vec = (output[0] * arg1.unsqueeze(-1)).sum(1)
         arg2_vec = (output[0] * arg2.unsqueeze(-1)).sum(1)

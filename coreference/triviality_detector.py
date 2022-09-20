@@ -68,7 +68,10 @@ def split_data(all_examples, dev_ratio=0.2):
     return train_test_split(pairs, labels, test_size=dev_ratio)
 
 
-def tokenize(tokenizer, mention_pairs, mention_map):
+def tokenize(tokenizer, mention_pairs, mention_map, m_end):
+
+    max_sentence_len = tokenizer.model_max_length
+
     pairwise_bert_instances_ab = []
     pairwise_bert_instances_ba = []
 
@@ -80,7 +83,8 @@ def tokenize(tokenizer, mention_pairs, mention_map):
         sentence_b = mention_map[m2]['bert_sentence']
 
         def make_instance(sent_a, sent_b):
-            return ' '.join(['<g>', doc_start, sent_a, doc_end, doc_start, sent_b, doc_end])
+            return ' '.join(['<g>', doc_start, sent_a, doc_end]), \
+                   ' '.join([doc_start, sent_b, doc_end])
 
         instance_ab = make_instance(sentence_a, sentence_b)
         pairwise_bert_instances_ab.append(instance_ab)
@@ -88,13 +92,42 @@ def tokenize(tokenizer, mention_pairs, mention_map):
         instance_ba = make_instance(sentence_b, sentence_a)
         pairwise_bert_instances_ba.append(instance_ba)
 
-    tokenized_ab = tokenizer(pairwise_bert_instances_ab, pad_to_max_length=True, add_special_tokens=False,
-                             truncation=False)
-    tokenized_ba = tokenizer(pairwise_bert_instances_ba, pad_to_max_length=True, add_special_tokens=False,
-                             truncation=False)
+    def truncate_with_mentions(input_ids):
+        input_ids_truncated = []
+        for input_id in input_ids:
+            m_end_index = input_id.index(m_end)
+            in_truncated = input_id[m_end_index-(max_sentence_len//4): m_end_index] + \
+                           input_id[m_end_index: m_end_index + (max_sentence_len//4)]
+            in_truncated = in_truncated + [tokenizer.pad_token_id]*(max_sentence_len//2 - len(in_truncated))
+            input_ids_truncated.append(in_truncated)
 
-    return (torch.LongTensor(tokenized_ab['input_ids']), torch.LongTensor(tokenized_ab['attention_mask'])), (
-    torch.LongTensor(tokenized_ba['input_ids']), torch.LongTensor(tokenized_ba['attention_mask']))
+        return torch.LongTensor(input_ids_truncated)
+
+    def ab_tokenized(pair_wise_instances):
+        instances_a, instances_b = zip(*pair_wise_instances)
+
+        tokenized_a = tokenizer(instances_a, add_special_tokens=False)
+        tokenized_b = tokenizer(instances_b, add_special_tokens=False)
+
+        tokenized_a = truncate_with_mentions(tokenized_a['input_ids'])
+        positions_a = torch.arange(tokenized_a.shape[-1]).expand(tokenized_a.shape)
+        tokenized_b = truncate_with_mentions(tokenized_b['input_ids'])
+        positions_b = torch.arange(tokenized_b.shape[-1]).expand(tokenized_b.shape)
+
+        tokenized_ab_ = torch.hstack((tokenized_a, tokenized_b))
+        positions_ab = torch.hstack((positions_a, positions_b))
+
+        tokenized_ab_dict = {'input_ids': tokenized_ab_,
+                             'attention_mask': (tokenized_ab_ != tokenizer.pad_token_id),
+                             'position_ids': positions_ab
+                             }
+
+        return tokenized_ab_dict
+
+    tokenized_ab = ab_tokenized(pairwise_bert_instances_ab)
+    tokenized_ba = ab_tokenized(pairwise_bert_instances_ba)
+
+    return tokenized_ab, tokenized_ba
 
 
 def get_arg_attention_mask(input_ids, parallel_model):
@@ -208,11 +241,8 @@ def train(train_pairs,
     tokenizer = parallel_model.module.tokenizer
 
     # prepare data
-    (train_tensor_ab, train_am_ab), (train_tensor_ba, train_am_ba) = tokenize(tokenizer, train_pairs, mention_map)
-    (dev_tensor_ab, dev_am_ab), (dev_tensor_ba, dev_am_ba) = tokenize(tokenizer, dev_pairs, mention_map)
-
-    print(train_tensor_ab.shape)
-    print(train_am_ab.shape)
+    train_ab, train_ba = tokenize(tokenizer, train_pairs, mention_map, parallel_model.module.end_id)
+    dev_ab, dev_ba = tokenize(tokenizer, dev_pairs, mention_map, parallel_model.module.end_id)
 
     # labels
     train_labels = torch.FloatTensor(train_labels)
@@ -227,23 +257,39 @@ def train(train_pairs,
             batch_indices = train_indices[i: i + batch_size]
 
             batch_tensor_ab, batch_tensor_ba = (
-                train_tensor_ab[batch_indices, :], train_tensor_ba[batch_indices, :]
+                train_ab['input_ids'][batch_indices, :], train_ba['input_ids'][batch_indices, :]
             )
 
             batch_am_ab, batch_am_ba = (
-                train_am_ab[batch_indices, :], train_am_ba[batch_indices, :]
+                train_ab['attention_mask'][batch_indices, :], train_ba['attention_mask'][batch_indices, :]
+            )
+
+            batch_posits_ab, batch_posits_ba = (
+                train_ab['position_ids'][batch_indices, :], train_ba['position_ids'][batch_indices, :]
             )
 
             am_g_ab, arg1_ab, arg2_ab = get_arg_attention_mask(batch_tensor_ab, parallel_model)
             am_g_ba, arg1_ba, arg2_ba = get_arg_attention_mask(batch_tensor_ba, parallel_model)
 
             batch_labels = train_labels[batch_indices].to(device)
-            batch_tensor_ab.to(device)
-            batch_tensor_ba.to(device)
 
-            scores_ab = parallel_model(batch_tensor_ab, attention_mask=batch_am_ab,
+            batch_tensor_ab.to(device)
+            batch_am_ab.to(device)
+            batch_posits_ab.to(device)
+            am_g_ab.to(device)
+            arg1_ab.to(device)
+            arg2_ab.to(device)
+
+            batch_tensor_ba.to(device)
+            batch_am_ba.to(device)
+            batch_posits_ba.to(device)
+            am_g_ba.to(device)
+            arg1_ba.to(device)
+            arg2_ba.to(device)
+
+            scores_ab = parallel_model(batch_tensor_ab, attention_mask=batch_am_ab, position_ids=batch_posits_ab,
                                        global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab)
-            scores_ba = parallel_model(batch_tensor_ba, attention_mask=batch_am_ba,
+            scores_ba = parallel_model(batch_tensor_ba, attention_mask=batch_am_ba, position_ids=batch_posits_ba,
                                        global_attention_mask=am_g_ba, arg1=arg1_ba, arg2=arg2_ba)
 
             scores_mean = (scores_ab + scores_ba) / 2
