@@ -185,27 +185,34 @@ def get_arg_attention_mask(input_ids, parallel_model):
     return attention_mask_g, arg1, arg2
 
 
-def predict(parallel_model, device, tensor_ab, tensor_ba, am_ab, am_ba, batch_size):
-    n = tensor_ab.shape[0]
+def forward_ab(parallel_model, ab_dict, device, indices):
+    batch_tensor_ab = ab_dict['input_ids'][indices, :]
+    batch_am_ab = ab_dict['attention_mask'][indices, :]
+    batch_posits_ab = ab_dict['position_ids'][indices, :]
+    am_g_ab, arg1_ab, arg2_ab = get_arg_attention_mask(batch_tensor_ab, parallel_model)
+
+    batch_tensor_ab.to(device)
+    batch_am_ab.to(device)
+    batch_posits_ab.to(device)
+    am_g_ab.to(device)
+    arg1_ab.to(device)
+    arg2_ab.to(device)
+
+    scores_ab = parallel_model(batch_tensor_ab, attention_mask=batch_am_ab, position_ids=batch_posits_ab,
+                               global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab)
+    return scores_ab
+
+
+def predict(parallel_model, device, dev_ab, dev_ba, batch_size):
+    n = dev_ab['input_ids'].shape[0]
+    indices = list(range(n))
     predictions = []
     with torch.no_grad():
         for i in tqdm(range(0, n, batch_size), desc='Predicting'):
-            batch_tensor_ab = tensor_ab[i:i + batch_size, :]
-            batch_tensor_ba = tensor_ba[i:i + batch_size, :]
+            batch_indices = indices[i: i + batch_size]
 
-            batch_am_ab = am_ab[i:i + batch_size, :]
-            batch_am_ba = am_ba[i:i + batch_size, :]
-
-            am_g_ab, arg1_ab, arg2_ab = get_arg_attention_mask(batch_tensor_ab, parallel_model)
-            am_g_ba, arg1_ba, arg2_ba = get_arg_attention_mask(batch_tensor_ba, parallel_model)
-
-            batch_tensor_ab.to(device)
-            batch_tensor_ba.to(device)
-
-            scores_ab = parallel_model(batch_tensor_ab, attention_mask=batch_am_ab,
-                                       global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab)
-            scores_ba = parallel_model(batch_tensor_ba, attention_mask=batch_am_ba,
-                                       global_attention_mask=am_g_ba, arg1=arg1_ba, arg2=arg2_ba)
+            scores_ab = forward_ab(parallel_model, dev_ab, device, batch_indices)
+            scores_ba = forward_ab(parallel_model, dev_ba, device, batch_indices)
 
             scores_mean = (scores_ab + scores_ba) / 2
 
@@ -256,41 +263,10 @@ def train(train_pairs,
             optimizer.zero_grad()
             batch_indices = train_indices[i: i + batch_size]
 
-            batch_tensor_ab, batch_tensor_ba = (
-                train_ab['input_ids'][batch_indices, :], train_ba['input_ids'][batch_indices, :]
-            )
-
-            batch_am_ab, batch_am_ba = (
-                train_ab['attention_mask'][batch_indices, :], train_ba['attention_mask'][batch_indices, :]
-            )
-
-            batch_posits_ab, batch_posits_ba = (
-                train_ab['position_ids'][batch_indices, :], train_ba['position_ids'][batch_indices, :]
-            )
-
-            am_g_ab, arg1_ab, arg2_ab = get_arg_attention_mask(batch_tensor_ab, parallel_model)
-            am_g_ba, arg1_ba, arg2_ba = get_arg_attention_mask(batch_tensor_ba, parallel_model)
+            scores_ab = forward_ab(parallel_model, train_ab, device, batch_indices)
+            scores_ba = forward_ab(parallel_model, train_ba, device, batch_indices)
 
             batch_labels = train_labels[batch_indices].to(device)
-
-            batch_tensor_ab.to(device)
-            batch_am_ab.to(device)
-            batch_posits_ab.to(device)
-            am_g_ab.to(device)
-            arg1_ab.to(device)
-            arg2_ab.to(device)
-
-            batch_tensor_ba.to(device)
-            batch_am_ba.to(device)
-            batch_posits_ba.to(device)
-            am_g_ba.to(device)
-            arg1_ba.to(device)
-            arg2_ba.to(device)
-
-            scores_ab = parallel_model(batch_tensor_ab, attention_mask=batch_am_ab, position_ids=batch_posits_ab,
-                                       global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab)
-            scores_ba = parallel_model(batch_tensor_ba, attention_mask=batch_am_ba, position_ids=batch_posits_ba,
-                                       global_attention_mask=am_g_ba, arg1=arg1_ba, arg2=arg2_ba)
 
             scores_mean = (scores_ab + scores_ba) / 2
 
@@ -304,8 +280,7 @@ def train(train_pairs,
 
         print(f'Iteration {n} Loss:', iteration_loss / len(train_pairs))
         # iteration accuracy
-        dev_predictions = predict(parallel_model, device, dev_tensor_ab, dev_tensor_ba, dev_am_ab, dev_am_ba,
-                                  batch_size)
+        dev_predictions = predict(parallel_model, device, dev_ab, dev_ba, batch_size)
         dev_predictions = torch.squeeze(dev_predictions)
         print(dev_predictions.shape)
         print(accuracy(dev_predictions, dev_labels))
