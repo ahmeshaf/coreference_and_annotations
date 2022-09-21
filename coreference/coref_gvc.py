@@ -327,11 +327,4 @@ if __name__ == '__main__':
     print("Using the Source     Directory: ", args.source)
     print("Using the Working    Directory:", args.tmp_folder)
     run_coreference(args.ann, args.source, args.tmp_folder)
-    
-
-
-# In[ ]:
-
-
-
-
+   
