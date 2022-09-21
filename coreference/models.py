@@ -63,8 +63,8 @@ class LongFormerCrossEncoder(nn.Module):
         else:
             self.linear.load_state_dict(linear_weights)
 
-    def generate_output(self, input_ids, attention_mask=None, position_ids=None,
-                        global_attention_mask=None, arg1=None, arg2=None):
+    def generate_cls_arg_vectors(self, input_ids, attention_mask, position_ids,
+                                 global_attention_mask, arg1, arg2):
         arg_names = set(getfullargspec(self.model).args)
 
         if 'global_attention_mask' in arg_names:
@@ -80,9 +80,19 @@ class LongFormerCrossEncoder(nn.Module):
         last_hidden_states = output.last_hidden_state
         cls_vector = output.pooler_output
 
-        arg1_vec = (last_hidden_states * arg1.unsqueeze(-1)).sum(1)
-        arg2_vec = (last_hidden_states * arg2.unsqueeze(-1)).sum(1)
+        arg1_vec = None
+        if arg1 is not None:
+            arg1_vec = (last_hidden_states * arg1.unsqueeze(-1)).sum(1)
+        arg2_vec = None
+        if arg2 is not None:
+            arg2_vec = (last_hidden_states * arg2.unsqueeze(-1)).sum(1)
 
+        return cls_vector, arg1_vec, arg2_vec
+
+    def generate_model_output(self, input_ids, attention_mask, position_ids,
+                              global_attention_mask, arg1, arg2):
+        cls_vector, arg1_vec, arg2_vec = self.generate_cls_arg_vectors(input_ids, attention_mask, position_ids,
+                                                                       global_attention_mask, arg1, arg2)
         if not self.long:
             return cls_vector
         else:
@@ -93,10 +103,10 @@ class LongFormerCrossEncoder(nn.Module):
 
     def forward(self, input_ids, attention_mask=None, position_ids=None,
                 global_attention_mask=None, arg1=None, arg2=None):
-        lm_output = self.generate_output(input_ids, attention_mask=attention_mask,
-                                         global_attention_mask=global_attention_mask,
-                                         position_ids=position_ids,
-                                         arg1=arg1, arg2=arg2)
+        lm_output = self.generate_model_output(input_ids, attention_mask=attention_mask,
+                                               global_attention_mask=global_attention_mask,
+                                               position_ids=position_ids,
+                                               arg1=arg1, arg2=arg2)
         return self.linear(lm_output)
 
 
