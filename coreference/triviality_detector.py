@@ -1,4 +1,5 @@
 import os.path
+import pickle
 
 from sklearn.model_selection import train_test_split
 import pyhocon
@@ -186,7 +187,7 @@ def get_arg_attention_mask(input_ids, parallel_model):
     return attention_mask_g, arg1, arg2
 
 
-def forward_ab(parallel_model, ab_dict, device, indices):
+def forward_ab(parallel_model, ab_dict, device, indices, lm_only=False):
     batch_tensor_ab = ab_dict['input_ids'][indices, :]
     batch_am_ab = ab_dict['attention_mask'][indices, :]
     batch_posits_ab = ab_dict['position_ids'][indices, :]
@@ -199,9 +200,49 @@ def forward_ab(parallel_model, ab_dict, device, indices):
     arg1_ab.to(device)
     arg2_ab.to(device)
 
-    scores_ab = parallel_model(batch_tensor_ab, attention_mask=batch_am_ab, position_ids=batch_posits_ab,
-                               global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab)
-    return scores_ab
+    return parallel_model(batch_tensor_ab, attention_mask=batch_am_ab, position_ids=batch_posits_ab,
+                               global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab, lm_only=lm_only)
+
+
+def generate_lm_out(parallel_model, device, dev_ab, dev_ba, batch_size):
+    n = dev_ab['input_ids'].shape[0]
+    indices = list(range(n))
+    ab_lm_out_all = []
+    ba_lm_out_all = []
+    with torch.no_grad():
+        for i in tqdm(range(0, n, batch_size), desc="Generating LM Outputs"):
+            batch_indices = indices[i: i + batch_size]
+            lm_out_ab = forward_ab(parallel_model, dev_ab, device, batch_indices, lm_only=True).detach().cpu()
+            ab_lm_out_all.append(lm_out_ab)
+
+            lm_out_ba = forward_ab(parallel_model, dev_ba, device, batch_indices, lm_only=True).detach().cpu()
+            ba_lm_out_all.append(lm_out_ba)
+
+    return {'ab': torch.vstack(ab_lm_out_all), 'ba': torch.vstack(ba_lm_out_all)}
+
+
+def frozen_predict(parallel_model, device, dev_ab, dev_ba, batch_size, lm_output_file_path, force_lm_output=False):
+    n = dev_ab['input_ids'].shape[0]
+    indices = list(range(n))
+    predictions = []
+    if not os.path.exists(lm_output_file_path) or force_lm_output:
+        lm_out_dict = generate_lm_out(parallel_model, device, dev_ab, dev_ba, batch_size)
+        pickle.dump(lm_out_dict, open(lm_output_file_path, 'rb'))
+    else:
+        lm_out_dict = pickle.load(open(lm_output_file_path, 'rb'))
+
+    with torch.no_grad():
+        for i in tqdm(range(0, n, batch_size), desc="Predicting"):
+            batch_indices = indices[i: i + batch_size]
+            ab_out = lm_out_dict['ab'][batch_indices, :]
+            ba_out = lm_out_dict['ba'][batch_indices, :]
+            scores_ab = parallel_model(ab_out.to(device), pre_lm_out=True)
+            scores_ba = parallel_model(ba_out.to(device), pre_lm_out=True)
+            scores_mean = (scores_ab + scores_ba)/2
+            batch_predictions = (scores_mean > 0.5).detach().cpu()
+            predictions.append(batch_predictions)
+
+    return torch.cat(predictions)
 
 
 def predict(parallel_model, device, dev_ab, dev_ba, batch_size):
@@ -221,6 +262,85 @@ def predict(parallel_model, device, dev_ab, dev_ba, batch_size):
             predictions.append(batch_predictions)
 
     return torch.cat(predictions)
+
+
+def train_frozen(train_pairs,
+          train_labels,
+          dev_pairs,
+          dev_labels,
+          parallel_model,
+          mention_map,
+          working_folder,
+          device,
+          force_lm_output=False,
+          batch_size=32,
+          n_iters=10,
+          lr_class=0.001):
+    bce_loss = torch.nn.BCELoss()
+    mse_loss = torch.nn.MSELoss()
+    optimizer = torch.optim.AdamW([
+        {'params': parallel_model.module.linear.parameters(), 'lr': lr_class}
+    ])
+    tokenizer = parallel_model.module.tokenizer
+    # prepare data
+    train_ab, train_ba = tokenize(tokenizer, train_pairs, mention_map, parallel_model.module.end_id)
+    dev_ab, dev_ba = tokenize(tokenizer, dev_pairs, mention_map, parallel_model.module.end_id)
+
+    # labels
+    train_labels = torch.FloatTensor(train_labels)
+    dev_labels = torch.LongTensor(dev_labels)
+
+    lm_output_file_path_train = working_folder + '/lm_output_train.pkl'
+    lm_output_file_path_dev = working_folder + '/lm_output_dev.pkl'
+
+    if not os.path.exists(lm_output_file_path_train) or force_lm_output:
+        lm_out_dict = generate_lm_out(parallel_model, device, train_ab, train_ba, batch_size)
+        pickle.dump(lm_out_dict, open(lm_output_file_path_train, 'rb'))
+    else:
+        lm_out_dict = pickle.load(open(lm_output_file_path_train, 'rb'))
+
+    for n in range(n_iters):
+        train_indices = list(range(len(train_pairs)))
+        random.shuffle(train_indices)
+        iteration_loss = 0.
+        for i in tqdm(range(0, len(train_indices), batch_size), desc='Training'):
+            optimizer.zero_grad()
+            batch_indices = train_indices[i: i + batch_size]
+            ab_out = lm_out_dict['ab'][batch_indices, :]
+            ba_out = lm_out_dict['ba'][batch_indices, :]
+            scores_ab = parallel_model(ab_out.to(device), pre_lm_out=True)
+            scores_ba = parallel_model(ba_out.to(device), pre_lm_out=True)
+            scores_mean = (scores_ab + scores_ba) / 2
+            batch_labels = train_labels[batch_indices].to(device)
+            loss = bce_loss(torch.squeeze(scores_mean), batch_labels) + mse_loss(scores_ab, scores_ba)
+            loss.backward()
+            optimizer.step()
+            iteration_loss += loss.item()
+
+        print(f'Iteration {n} Loss:', iteration_loss / len(train_pairs))
+        # iteration accuracy
+        dev_predictions = frozen_predict(parallel_model, device, dev_ab, dev_ba,
+                                         batch_size, lm_output_file_path_dev, force_lm_output)
+        dev_predictions = torch.squeeze(dev_predictions)
+        print(dev_predictions.shape)
+        print(accuracy(dev_predictions, dev_labels))
+        print(f1_score(dev_predictions, dev_labels))
+
+        scorer_folder = working_folder + f'/scorer_frozen/chk_{n}'
+        if not os.path.exists(scorer_folder):
+            os.makedirs(scorer_folder)
+        model_path = scorer_folder + '/linear.chkpt'
+        torch.save(parallel_model.module.linear.state_dict(), model_path)
+        parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
+        parallel_model.module.model.tokenizer.save_pretrained(scorer_folder + '/bert')
+
+    scorer_folder = working_folder + '/scorer_frozen/'
+    if not os.path.exists(scorer_folder):
+        os.makedirs(scorer_folder)
+    model_path = scorer_folder + '/linear.chkpt'
+    torch.save(parallel_model.module.linear.state_dict(), model_path)
+    parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
+    parallel_model.module.tokenizer.save_pretrained(scorer_folder + '/bert')
 
 
 def train(train_pairs,

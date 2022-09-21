@@ -102,11 +102,18 @@ class LongFormerCrossEncoder(nn.Module):
         return self.linear(input_)
 
     def forward(self, input_ids, attention_mask=None, position_ids=None,
-                global_attention_mask=None, arg1=None, arg2=None):
+                global_attention_mask=None, arg1=None, arg2=None, lm_only=False, pre_lm_out=False):
+
+        if pre_lm_out:
+            return self.linear(input_ids)
+
         lm_output = self.generate_model_output(input_ids, attention_mask=attention_mask,
                                                global_attention_mask=global_attention_mask,
                                                position_ids=position_ids,
                                                arg1=arg1, arg2=arg2)
+        if lm_only:
+            return lm_output
+
         return self.linear(lm_output)
 
 
