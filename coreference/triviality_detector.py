@@ -318,21 +318,22 @@ def train_frozen(train_pairs,
             iteration_loss += loss.item()
 
         print(f'Iteration {n} Loss:', iteration_loss / len(train_pairs))
-        # iteration accuracy
-        dev_predictions = frozen_predict(parallel_model, device, dev_ab, dev_ba,
-                                         batch_size, lm_output_file_path_dev, force_lm_output)
-        dev_predictions = torch.squeeze(dev_predictions)
-        print(dev_predictions.shape)
-        print(accuracy(dev_predictions, dev_labels))
-        print(f1_score(dev_predictions, dev_labels))
 
-        scorer_folder = working_folder + f'/scorer_frozen/chk_{n}'
-        if not os.path.exists(scorer_folder):
-            os.makedirs(scorer_folder)
-        model_path = scorer_folder + '/linear.chkpt'
-        torch.save(parallel_model.module.linear.state_dict(), model_path)
-        parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
-        parallel_model.module.model.tokenizer.save_pretrained(scorer_folder + '/bert')
+        if n % 10 == 0:
+            # iteration accuracy
+            dev_predictions = frozen_predict(parallel_model, device, dev_ab, dev_ba,
+                                             batch_size, lm_output_file_path_dev, force_lm_output)
+            dev_predictions = torch.squeeze(dev_predictions)
+            print(dev_predictions.shape)
+            print(accuracy(dev_predictions, dev_labels))
+            print(f1_score(dev_predictions, dev_labels))
+            scorer_folder = working_folder + f'/scorer_frozen/chk_{n}'
+            if not os.path.exists(scorer_folder):
+                os.makedirs(scorer_folder)
+            model_path = scorer_folder + '/linear.chkpt'
+            torch.save(parallel_model.module.linear.state_dict(), model_path)
+            parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
+            parallel_model.module.model.tokenizer.save_pretrained(scorer_folder + '/bert')
 
     scorer_folder = working_folder + '/scorer_frozen/'
     if not os.path.exists(scorer_folder):
