@@ -338,9 +338,9 @@ def train_frozen(train_pairs,
             dev_predictions = frozen_predict(parallel_model, device, dev_ab, dev_ba,
                                              batch_size, lm_output_file_path_dev, force_lm_output)
             dev_predictions = torch.squeeze(dev_predictions)
-            print(dev_predictions.shape)
-            print(accuracy(dev_predictions, dev_labels))
-            print(f1_score(dev_predictions, dev_labels))
+
+            print("dev accuracy:", accuracy(dev_predictions, dev_labels))
+            print("dev f1:", f1_score(dev_predictions, dev_labels))
             scorer_folder = working_folder + f'/scorer_frozen/chk_{n}'
             if not os.path.exists(scorer_folder):
                 os.makedirs(scorer_folder)
@@ -419,9 +419,9 @@ def train(train_pairs,
         # iteration accuracy
         dev_predictions = predict(parallel_model, device, dev_ab, dev_ba, batch_size)
         dev_predictions = torch.squeeze(dev_predictions)
-        print(dev_predictions.shape)
-        print(accuracy(dev_predictions, dev_labels))
-        print(f1_score(dev_predictions, dev_labels))
+
+        print("dev accuracy:", accuracy(dev_predictions, dev_labels))
+        print("dev f1:", f1_score(dev_predictions, dev_labels))
 
         scorer_folder = working_folder + f'/scorer/chk_{n}'
         if not os.path.exists(scorer_folder):
@@ -454,8 +454,8 @@ if __name__ == '__main__':
     train_pairs, train_labels = zip(*load_data(triv_train_path))
     dev_pairs, dev_labels = zip(*load_data(triv_dev_path))
     
-    train_pairs = list(train_pairs)[:100]
-    train_labels = list(train_labels)[:100]
+    train_pairs = list(train_pairs)
+    train_labels = list(train_labels)
 
     device = torch.device('cuda:0')
     model_name = '/home/ubuntu/workspace/coreference_and_annotations/parsing/ecb/scorer/chk_30/bert'
