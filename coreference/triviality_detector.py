@@ -1,3 +1,8 @@
+import os
+import sys
+parent_path = os.path.abspath(os.path.dirname(os.path.abspath(__file__)) + '/../')
+sys.path.append(parent_path)
+
 import os.path
 import pickle
 
@@ -227,7 +232,7 @@ def frozen_predict(parallel_model, device, dev_ab, dev_ba, batch_size, lm_output
     predictions = []
     if not os.path.exists(lm_output_file_path) or force_lm_output:
         lm_out_dict = generate_lm_out(parallel_model, device, dev_ab, dev_ba, batch_size)
-        pickle.dump(lm_out_dict, open(lm_output_file_path, 'rb'))
+        pickle.dump(lm_out_dict, open(lm_output_file_path, 'wb'))
     else:
         lm_out_dict = pickle.load(open(lm_output_file_path, 'rb'))
 
@@ -295,7 +300,7 @@ def train_frozen(train_pairs,
 
     if not os.path.exists(lm_output_file_path_train) or force_lm_output:
         lm_out_dict = generate_lm_out(parallel_model, device, train_ab, train_ba, batch_size)
-        pickle.dump(lm_out_dict, open(lm_output_file_path_train, 'rb'))
+        pickle.dump(lm_out_dict, open(lm_output_file_path_train, 'wb'))
     else:
         lm_out_dict = pickle.load(open(lm_output_file_path_train, 'rb'))
 
