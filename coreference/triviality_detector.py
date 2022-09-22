@@ -108,8 +108,8 @@ def tokenize(tokenizer, mention_pairs, mention_map, m_end, max_sentence_len=None
     def ab_tokenized(pair_wise_instances):
         instances_a, instances_b = zip(*pair_wise_instances)
 
-        tokenized_a = tokenizer(instances_a, add_special_tokens=False)
-        tokenized_b = tokenizer(instances_b, add_special_tokens=False)
+        tokenized_a = tokenizer(list(instances_a), add_special_tokens=False)
+        tokenized_b = tokenizer(list(instances_b), add_special_tokens=False)
 
         tokenized_a = truncate_with_mentions(tokenized_a['input_ids'])
         positions_a = torch.arange(tokenized_a.shape[-1]).expand(tokenized_a.shape)
