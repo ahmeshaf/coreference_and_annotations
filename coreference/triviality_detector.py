@@ -235,14 +235,18 @@ def frozen_predict(parallel_model, device, dev_ab, dev_ba, batch_size, lm_output
         pickle.dump(lm_out_dict, open(lm_output_file_path, 'wb'))
     else:
         lm_out_dict = pickle.load(open(lm_output_file_path, 'rb'))
-
+    print(lm_out_dict['ab'].shape)
+    print(n)
     with torch.no_grad():
         for i in tqdm(range(0, n, batch_size), desc="Predicting"):
             batch_indices = indices[i: i + batch_size]
             ab_out = lm_out_dict['ab'][batch_indices, :]
             ba_out = lm_out_dict['ba'][batch_indices, :]
-            scores_ab = parallel_model(ab_out.to(device), pre_lm_out=True)
-            scores_ba = parallel_model(ba_out.to(device), pre_lm_out=True)
+            print(ab_out)
+            ab_out.to(device)
+            ba_out.to(device)
+            scores_ab = parallel_model(ab_out, pre_lm_out=True)
+            scores_ba = parallel_model(ba_out, pre_lm_out=True)
             scores_mean = (scores_ab + scores_ba)/2
             batch_predictions = (scores_mean > 0.5).detach().cpu()
             predictions.append(batch_predictions)
@@ -278,7 +282,7 @@ def train_frozen(train_pairs,
           working_folder,
           device,
           force_lm_output=False,
-          batch_size=32,
+          batch_size=30,
           n_iters=10,
           lr_class=0.001):
     bce_loss = torch.nn.BCELoss()
@@ -436,11 +440,14 @@ if __name__ == '__main__':
 
     train_pairs, train_labels = zip(*load_data(triv_train_path))
     dev_pairs, dev_labels = zip(*load_data(triv_dev_path))
+    
+    train_pairs = list(train_pairs)[:100]
+    train_labels = list(train_labels)[:100]
 
     device = torch.device('cuda:0')
-
-    scorer_module = LongFormerCrossEncoder(is_training=True).to(device)
-    device_ids = [0, 1]
+    model_name = '/home/ubuntu/workspace/coreference_and_annotations/parsing/ecb/scorer/chk_30/bert'
+    scorer_module = LongFormerCrossEncoder(is_training=False, model_name=model_name).to(device)
+    device_ids = list(range(8))
 
     parallel_model = torch.nn.DataParallel(scorer_module, device_ids=device_ids)
     parallel_model.module.to(device)
@@ -456,13 +463,13 @@ if __name__ == '__main__':
     for key, val in ecb_mention_map.items():
         val['mention_id'] = key
 
-    train(train_pairs,
+    train_frozen(train_pairs,
           train_labels,
           dev_pairs,
           dev_labels,
           parallel_model,
           ecb_mention_map,
           working_folder,
-          device, batch_size=32, lr_class=0.00001, lr_lm=0.000001,
+          device, batch_size=64, lr_class=0.00001, force_lm_output=False,
           n_iters=100)
 
