@@ -245,7 +245,6 @@ def frozen_predict(parallel_model, device, dev_ab, dev_ba, batch_size, lm_output
             batch_indices = indices[i: i + batch_size]
             ab_out = lm_out_dict['ab'][batch_indices, :]
             ba_out = lm_out_dict['ba'][batch_indices, :]
-            print(ab_out)
             ab_out.to(device)
             ba_out.to(device)
             scores_ab = parallel_model(ab_out, pre_lm_out=True)
@@ -348,7 +347,7 @@ def train_frozen(train_pairs,
             model_path = scorer_folder + '/linear.chkpt'
             torch.save(parallel_model.module.linear.state_dict(), model_path)
             parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
-            parallel_model.module.model.tokenizer.save_pretrained(scorer_folder + '/bert')
+            parallel_model.module.tokenizer.save_pretrained(scorer_folder + '/bert')
 
     scorer_folder = working_folder + '/scorer_frozen/'
     if not os.path.exists(scorer_folder):
@@ -430,7 +429,7 @@ def train(train_pairs,
         model_path = scorer_folder + '/linear.chkpt'
         torch.save(parallel_model.module.linear.state_dict(), model_path)
         parallel_model.module.model.save_pretrained(scorer_folder + '/bert')
-        parallel_model.module.model.tokenizer.save_pretrained(scorer_folder + '/bert')
+        parallel_model.module.tokenizer.save_pretrained(scorer_folder + '/bert')
 
     scorer_folder = working_folder + '/scorer/'
     if not os.path.exists(scorer_folder):
