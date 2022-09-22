@@ -214,6 +214,8 @@ def generate_lm_out(parallel_model, device, dev_ab, dev_ba, batch_size):
     indices = list(range(n))
     ab_lm_out_all = []
     ba_lm_out_all = []
+    new_batch_size = batching(n, batch_size, len(device_ids))
+    batch_size = new_batch_size
     with torch.no_grad():
         for i in tqdm(range(0, n, batch_size), desc="Generating LM Outputs"):
             batch_indices = indices[i: i + batch_size]
@@ -235,8 +237,9 @@ def frozen_predict(parallel_model, device, dev_ab, dev_ba, batch_size, lm_output
         pickle.dump(lm_out_dict, open(lm_output_file_path, 'wb'))
     else:
         lm_out_dict = pickle.load(open(lm_output_file_path, 'rb'))
-    print(lm_out_dict['ab'].shape)
-    print(n)
+
+    new_batch_size = batching(n, batch_size, len(device_ids))
+    batch_size = new_batch_size
     with torch.no_grad():
         for i in tqdm(range(0, n, batch_size), desc="Predicting"):
             batch_indices = indices[i: i + batch_size]
@@ -258,6 +261,8 @@ def predict(parallel_model, device, dev_ab, dev_ba, batch_size):
     n = dev_ab['input_ids'].shape[0]
     indices = list(range(n))
     predictions = []
+    new_batch_size = batching(n, batch_size, len(device_ids))
+    batch_size = new_batch_size
     with torch.no_grad():
         for i in tqdm(range(0, n, batch_size), desc='Predicting'):
             batch_indices = indices[i: i + batch_size]
@@ -312,9 +317,10 @@ def train_frozen(train_pairs,
         train_indices = list(range(len(train_pairs)))
         random.shuffle(train_indices)
         iteration_loss = 0.
-        for i in tqdm(range(0, len(train_indices), batch_size), desc='Training'):
+        new_batch_size = batching(len(train_indices), batch_size, len(device_ids))
+        for i in tqdm(range(0, len(train_indices), new_batch_size), desc='Training'):
             optimizer.zero_grad()
-            batch_indices = train_indices[i: i + batch_size]
+            batch_indices = train_indices[i: i + new_batch_size]
             ab_out = lm_out_dict['ab'][batch_indices, :]
             ba_out = lm_out_dict['ba'][batch_indices, :]
             scores_ab = parallel_model(ab_out.to(device), pre_lm_out=True)
@@ -390,9 +396,10 @@ def train(train_pairs,
         train_indices = list(range(len(train_pairs)))
         random.shuffle(train_indices)
         iteration_loss = 0.
-        for i in tqdm(range(0, len(train_indices), batch_size), desc='Training'):
+        new_batch_size = batching(len(train_indices), batch_size, len(device_ids))
+        for i in tqdm(range(0, len(train_indices), new_batch_size), desc='Training'):
             optimizer.zero_grad()
-            batch_indices = train_indices[i: i + batch_size]
+            batch_indices = train_indices[i: i + new_batch_size]
 
             scores_ab = forward_ab(parallel_model, train_ab, device, batch_indices)
             scores_ba = forward_ab(parallel_model, train_ba, device, batch_indices)
@@ -434,6 +441,13 @@ def train(train_pairs,
     parallel_model.module.tokenizer.save_pretrained(scorer_folder + '/bert')
 
 
+def batching(n, batch_size, min_batch):
+    new_batch_size = batch_size
+    while n % new_batch_size < min_batch:
+        new_batch_size -= 1
+    return new_batch_size
+
+
 if __name__ == '__main__':
     triv_train_path = '../parsing/ecb/trivial_non_trivial_train.csv'
     triv_dev_path = '../parsing/ecb/trivial_non_trivial_dev.csv'
@@ -464,12 +478,12 @@ if __name__ == '__main__':
         val['mention_id'] = key
 
     train_frozen(train_pairs,
-          train_labels,
-          dev_pairs,
-          dev_labels,
-          parallel_model,
-          ecb_mention_map,
-          working_folder,
-          device, batch_size=64, lr_class=0.00001, force_lm_output=False,
-          n_iters=100)
+                 train_labels,
+                 dev_pairs,
+                 dev_labels,
+                 parallel_model,
+                 ecb_mention_map,
+                 working_folder,
+                 device, batch_size=64, lr_class=0.00001, force_lm_output=False,
+                 n_iters=100)
 
