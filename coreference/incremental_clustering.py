@@ -204,23 +204,23 @@ class Clustering:
                     _, triv_mention_pos, _ = pruned_clusters[0]
                     # add a new pos datapoint of the form:
                     # (target_mention, candidate_mention, is_trivial, is_coreferent)
-                    self.trivial_non_trivial.append([target_mention, triv_mention_pos['mention_id'], '1', '1'])
+                    self.trivial_non_trivial.append([target_mention, triv_mention_pos['mention_id'], 'EASY', 'POS'])
                     if len(sorted_clusters) > 1:
                         _, triv_mention_neg, _ = sorted_clusters[-1]
                         # add the last ranked candidate as a trivial non-coreferent
-                        self.trivial_non_trivial.append([target_mention, triv_mention_neg['mention_id'], '1', '0'])
+                        self.trivial_non_trivial.append([target_mention, triv_mention_neg['mention_id'], 'EASY', 'NEG'])
                 elif len(sorted_clusters) > 0 and target_clus_id in all_clus_ids:
                     _, non_triv_mention_pos, _ = sorted_clusters[all_clus_ids.index(target_clus_id)]
-                    self.trivial_non_trivial.append([target_mention, non_triv_mention_pos['mention_id'], '0', '1'])
+                    self.trivial_non_trivial.append([target_mention, non_triv_mention_pos['mention_id'], 'HARD', 'POS'])
 
                     if all_clus_ids.index(target_clus_id) > 0:
                         _, non_triv_mention_neg, _ = sorted_clusters[0]
                         self.trivial_non_trivial.append([target_mention, non_triv_mention_neg['mention_id'],
-                                                         '0', '0'])
+                                                         'HARD', 'NEG'])
                 elif len(sorted_clusters) > 0:
                     _, non_triv_mention_neg, _ = sorted_clusters[0]
                     self.trivial_non_trivial.append([target_mention, non_triv_mention_neg['mention_id'],
-                                                     '0', '0'])
+                                                     'HARD', 'NEG'])
 
             # iterate through the candidates, merge and break if suitable cluster is found
             for i, (clus, max_mention, sim) in enumerate(pruned_clusters):
