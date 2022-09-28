@@ -449,6 +449,37 @@ def batching(n, batch_size, min_batch):
     return new_batch_size
 
 
+def predict_trained_model(model_name, linear_weights_path, test_set_path, working_folder):
+    test_pairs, test_labels = zip(*load_data(test_set_path))
+    test_labels = torch.LongTensor(test_labels)
+    # read annotations
+    ecb_mention_map_path = working_folder + '/mention_map.pkl'
+    if not os.path.exists(ecb_mention_map_path):
+        parse_annotations(ann_dir, working_folder)
+    ecb_mention_map = pickle.load(open(ecb_mention_map_path, 'rb'))
+    for key, val in ecb_mention_map.items():
+        val['mention_id'] = key
+
+    device = torch.device('cuda:0')
+    device_ids = list(range(4))
+    linear_weights = torch.load(linear_weights_path)
+    scorer_module = LongFormerCrossEncoder(is_training=False, model_name=model_name,
+                                           linear_weights=linear_weights).to(device)
+    parallel_model = torch.nn.DataParallel(scorer_module, device_ids=device_ids)
+    parallel_model.module.to(device)
+
+    tokenizer = parallel_model.module.tokenizer
+    # prepare data
+
+    test_ab, test_ba = tokenize(tokenizer, test_pairs, mention_map, parallel_model.module.end_id)
+
+    predictions = predict(parallel_model, device, test_ab, test_ba, batch_size=128)
+    print("Test accuracy:", accuracy(predictions, test_labels))
+    print("Test precision:", precision(predictions, test_labels))
+    print("Test recall:", recall(predictions, test_labels))
+    print("Test f1:", f1_score(predictions, test_labels))
+
+
 if __name__ == '__main__':
 
     triv_train_path = parent_path + '/parsing/ecb/trivial_non_trivial_train.csv'
@@ -462,7 +493,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda:0')
     model_name = 'allenai/longformer-base-4096'
-    scorer_module = LongFormerCrossEncoder(is_training=False, model_name=model_name).to(device)
+    scorer_module = LongFormerCrossEncoder(is_training=True, model_name=model_name).to(device)
 
     device_ids = list(range(4))
 
