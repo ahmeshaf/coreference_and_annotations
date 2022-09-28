@@ -450,8 +450,9 @@ def batching(n, batch_size, min_batch):
 
 
 if __name__ == '__main__':
-    triv_train_path = '../parsing/ecb/trivial_non_trivial_train.csv'
-    triv_dev_path = '../parsing/ecb/trivial_non_trivial_dev.csv'
+
+    triv_train_path = parent_path + '/parsing/ecb/trivial_non_trivial_train.csv'
+    triv_dev_path = parent_path + '/parsing/ecb/trivial_non_trivial_dev.csv'
 
     train_pairs, train_labels = zip(*load_data(triv_train_path))
     dev_pairs, dev_labels = zip(*load_data(triv_dev_path))
@@ -460,14 +461,17 @@ if __name__ == '__main__':
     train_labels = list(train_labels)
 
     device = torch.device('cuda:0')
-    model_name = '/home/ubuntu/workspace/coreference_and_annotations/parsing/ecb/scorer/chk_30/bert'
+    model_name = 'allenai/longformer-base-4096'
     scorer_module = LongFormerCrossEncoder(is_training=False, model_name=model_name).to(device)
-    device_ids = list(range(8))
+
+    device_ids = list(range(4))
 
     parallel_model = torch.nn.DataParallel(scorer_module, device_ids=device_ids)
     parallel_model.module.to(device)
 
-    working_folder = "../parsing/ecb"
+    working_folder = parent_path + "/parsing/ecb"
+
+    # edit this or not!
     ann_dir = "/Users/rehan/workspace/data/ECB+_LREC2014"
 
     # read annotations
@@ -478,13 +482,14 @@ if __name__ == '__main__':
     for key, val in ecb_mention_map.items():
         val['mention_id'] = key
 
-    train_frozen(train_pairs,
+    train(train_pairs,
                  train_labels,
                  dev_pairs,
                  dev_labels,
                  parallel_model,
                  ecb_mention_map,
                  working_folder,
-                 device, batch_size=64, lr_class=0.00001, force_lm_output=False,
+                 device, batch_size=16, lr_class=0.0001, lr_lm=0.000001,
+                 # force_lm_output=False,
                  n_iters=100)
 
