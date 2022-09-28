@@ -340,6 +340,7 @@ def train_frozen(train_pairs,
             dev_predictions = torch.squeeze(dev_predictions)
 
             print("dev accuracy:", accuracy(dev_predictions, dev_labels))
+            print("dev precision:", precision(dev_predictions, dev_labels))
             print("dev f1:", f1_score(dev_predictions, dev_labels))
             scorer_folder = working_folder + f'/scorer_frozen/chk_{n}'
             if not os.path.exists(scorer_folder):
@@ -421,6 +422,7 @@ def train(train_pairs,
         dev_predictions = torch.squeeze(dev_predictions)
 
         print("dev accuracy:", accuracy(dev_predictions, dev_labels))
+        print("dev precision:", precision(dev_predictions, dev_labels))
         print("dev f1:", f1_score(dev_predictions, dev_labels))
 
         scorer_folder = working_folder + f'/scorer/chk_{n}'
