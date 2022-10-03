@@ -14,7 +14,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from evaluations.eval import *
 import numpy as np
-from incremental_clustering import incremental_clustering
+from coreference.incremental_clustering import incremental_clustering
 from sklearn.cluster import AgglomerativeClustering
 
 
@@ -113,16 +113,60 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
     """
     similarities = []
 
+    within_doc_similarities = []
+
+    doc_sent_map = pickle.load(open(working_folder + '/doc_sent_map.pkl', 'rb'))
+    doc_sims = pickle.load(open(working_folder + '/doc_sims_path.pkl', 'rb'))
+    doc_ids = []
+
+    for doc_id, _ in list(doc_sent_map.items()):
+        doc_ids.append(doc_id)
+
+    doc2id = {doc: i for i, doc in enumerate(doc_ids)}
+
     # generate similarity using the mention text
     for pair in mention_pairs:
         men1, men2 = pair
         men_map1 = mention_map[men1]
         men_map2 = mention_map[men2]
-        men_text1 = men_map1['mention_text']
-        men_text2 = men_map2['mention_text']
-        similarities.append(int(men_text1 == men_text2))
+        men_text1 = men_map1['mention_text'].lower()
+        men_text2 = men_map2['mention_text'].lower()
 
-    return similarities
+        def jc(arr1, arr2):
+            return len(set.intersection(arr1, arr2))/len(set.union(arr1, arr2))
+
+        sent_sim = jc(set(men_map1['sentence_tokens']), set(men_map2['sentence_tokens']))
+        doc_sim = doc_sims[doc2id[men_map1['doc_id']], doc2id[men_map2['doc_id']]]
+        lemma_sim = float(men_map1['lemma'] in men_text2 or men_map2['lemma'] in men_text1)
+
+        same_doc = float(men_map1['doc_id'] == men_map2['doc_id'])
+
+        # similarities.append(sent_sim + doc_sim + lemma_sim)
+        similarities.append((lemma_sim + 0.3*sent_sim)/2)
+        # similarities.append((lemma_sim + 0.3*sent_sim)/2)
+        within_doc_similarities.append(same_doc)
+
+
+        # doc_plus_sent = 0. + doc_sim + sent_sim
+        # if men_map1['lemma'] in men_text2 or men_map2['lemma'] in men_text1:
+        #     # similarities.append(jc(set(men_map1['sentence_tokens']), set(men_map2['sentence_tokens'])))
+        #     similarities.append(1. + doc_plus_sent)
+        #
+        #     if men_map1['doc_id'] == men_map2['doc_id']:
+        #         within_doc_similarities.append(1 + sent_sim)
+        #     else:
+        #         within_doc_similarities.append(doc_sim)
+        #
+        # else:
+        #     similarities.append(doc_sim + sent_sim)
+        #     if men_map1['doc_id'] == men_map2['doc_id']:
+        #         within_doc_similarities.append(sent_sim)
+        #     else:
+        #         within_doc_similarities.append(doc_sim)
+
+    combined_sim = np.array(similarities) + np.array(within_doc_similarities)
+
+    return np.array(similarities)
 
 
 def cluster_agglo(affinity_matrix, threshold=0.5):
@@ -169,7 +213,8 @@ def cluster_cc(affinity_matrix, threshold=0.8):
 
 def coreference(curr_mention_map, all_mention_map, working_folder,
                 men_type='evt', relations=None, sim_type='lemma',
-                cluster_algo='cc', threshold=0.8):
+                cluster_algo='cc', threshold=0.8, simulation=False,
+                top_n=3):
     """
 
     Parameters
@@ -236,8 +281,15 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
     elif cluster_algo == 'agglo':
         clusters, labels = cluster_agglo(similarity_matrix)
     elif cluster_algo == 'inc':
-        clusters, labels = incremental_clustering(similarity_matrix, threshold, curr_mentions,
-                                                  all_mention_map, curr_men_to_ind)
+        if not simulation:
+            clusters, labels = incremental_clustering(similarity_matrix, threshold, curr_mentions,
+                                                      all_mention_map, curr_men_to_ind, simulation=simulation,
+                                                      top_n=top_n)
+        else:
+            clusters, labels, inc_clusterer = incremental_clustering(similarity_matrix, threshold,
+                                                                          curr_mentions, all_mention_map,
+                                                                          curr_men_to_ind, simulation=simulation,
+                                                                          top_n=top_n)
     else:
         raise AssertionError
     system_mention_cluster_map = [(men, clus) for men, clus in zip(curr_mentions, labels)]
@@ -248,6 +300,9 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
 
     # evaluate
     generate_results(gold_key_file, system_key_file)
+
+    if simulation and cluster_algo == 'inc':
+        return inc_clusterer
 
 
 def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
@@ -275,18 +330,18 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
         os.makedirs(working_folder)
 
     # extract the mention maps
-    eve_mention_map, ent_mention_map, relations, doc_sent_map = extract_mentions(ann_dir, source_dir, working_folder)
+    mention_map, doc_sent_map = extract_mentions(ann_dir, source_dir, working_folder)
 
-    # which coreference mention map
-    if men_type == 'evt':
-        curr_mention_map = eve_mention_map
-    else:
-        curr_mention_map = ent_mention_map
+    curr_mention_map = {key: val for key, val in mention_map.items() if val['men_type'] == men_type}
 
-    # create a single dict for all mentions
-    all_mention_map = {**eve_mention_map, **ent_mention_map}
+    # do some filtering:
+    curr_mention_map_new = {}
+    for key, mention in curr_mention_map.items():
+        mention_text = mention['mention_text']
+        if len(mention_text.strip()) > 2 and len(mention_text.split()) < 4:
+            curr_mention_map_new[key] = mention
 
-    coreference(curr_mention_map, all_mention_map, working_folder, men_type, relations,
+    coreference(curr_mention_map_new, mention_map, working_folder, men_type, None,
                 sim_type='lemma', cluster_algo='inc')
 
 

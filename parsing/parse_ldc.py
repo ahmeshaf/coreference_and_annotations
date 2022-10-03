@@ -12,7 +12,7 @@ import spacy
 from bs4 import BeautifulSoup as bs
 from parsing.utils import add_lexical_features, add_sentential_features
 import copy
-
+from tqdm.autonotebook import tqdm
 from collections import OrderedDict, defaultdict
 
 
@@ -129,7 +129,8 @@ def get_ltf_map(ltf_xml):
             'sent_id': sent_id,
             'start_char': seg_start_char,
             'token_map': token_map,
-            'sent_text': sent_text
+            'sent_text': sent_text,
+            'sentence': sent_text
         }
     return doc_id, sent_dict
 
@@ -154,7 +155,7 @@ def get_doc_sent_map_zipped(source_dir, working_folder):
         if len(glob.glob(ltf_dir + '/*.ltf.zip')) == 0:
             print("Error. ltf files not found!")
             raise FileNotFoundError
-        for ltf_zip_file in glob.glob(ltf_dir + '/*.ltf.zip'):
+        for ltf_zip_file in tqdm(list(glob.glob(ltf_dir + '/*.ltf.zip')), desc='Reading Source Files'):
             with ZipFile(ltf_zip_file) as myzip:
                 for ltf_file in myzip.filelist:
                     with myzip.open(ltf_file) as my_file:
@@ -320,6 +321,29 @@ def add_bert_docs(mention_map, doc_sent_map):
         mention['bert_doc'] = bert_doc
 
 
+def get_relations(ann_dir):
+    relations = []
+    # add the event arg relations - col names: eventmention_id	slot_type	argmention_id
+    relations.extend([(row['eventmention_id'], row['slot_type'], row['argmention_id'])
+                      for row in get_all_topic_rows(ann_dir, 'evt_slots')])
+
+    # add the entity-entity relations - col names: relationmention_id	slot_type	argmention_id
+    # each relationmention_id has two arguments - head and tail separately
+    rel_slots_rows = get_all_topic_rows(ann_dir, 'rel_slots')
+    rel_map = defaultdict(list)
+    for row in rel_slots_rows:
+        rel_map[row['relationmention_id']].append(row)
+    for rels in rel_map.values():
+        if len(rels) == 2:
+            rel1 = rels[0]
+            rel2 = rels[1]
+            # arg in rel2 is head in rel1 and vice versa
+            relations.append((rel2['argmention_id'], rel1['slot_type'], rel1['argmention_id']))
+            relations.append((rel1['argmention_id'], rel2['slot_type'], rel2['argmention_id']))
+
+    return relations
+
+
 def extract_mentions(ann_dir, source_dir, working_folder):
     """
     Extracts the mention information from the ltf files using the annotations tab file
@@ -342,60 +366,55 @@ def extract_mentions(ann_dir, source_dir, working_folder):
         dict of dicts representing the mentions
         dict has these keys: {mention_id, mention_text, doc_id, sent_id, sent_tok_numbers, doc_tok_numbers}
     """
-    # path to the parent_children.tab file
-    parent_children_path = source_dir + '/docs/parent_children.tab'
-
-    ltf_doc_info_map = get_ltf_doc_info_map_aida(parent_children_path)
-
+    if not os.path.exists(working_folder):
+        os.makedirs(working_folder)
     # get the doc sentences map
     doc_sent_map = get_doc_sent_map_zipped(source_dir, working_folder)
 
-    # augment topics from annotations doc_lang_topic.tab
-    doc_lang_topic_file = ann_dir + "/docs/doc_lang_topic.tab"
-    doc_lang_topic_rows_dict = read_csv(doc_lang_topic_file)
-    rootid_dlt_map = {row['root_uid']: row for row in doc_lang_topic_rows_dict}
-    for val in ltf_doc_info_map.values():
-        if val['parent_uid'] in rootid_dlt_map:
-            val['topic'] = rootid_dlt_map[val['parent_uid']]['topic_id']
-
     # generate mention maps
-    eve_mention_map_file = working_folder + '/evt_mention_map.pkl'
-    ent_mention_map_file = working_folder + '/ent_mention_map.pkl'
-    if os.path.exists(eve_mention_map_file) and os.path.exists(ent_mention_map_file):
+    mention_map_file = working_folder + '/mention_map.pkl'
+    if os.path.exists(mention_map_file):
         # if files already there, just load the pickles
-        eve_mention_map = pickle.load(open(eve_mention_map_file, 'rb'))
-        ent_mention_map = pickle.load(open(ent_mention_map_file, 'rb'))
+        mention_map = pickle.load(open(mention_map_file, 'rb'))
+        return mention_map, doc_sent_map
     else:
+        # path to the parent_children.tab file
+        parent_children_path = source_dir + '/docs/parent_children.tab'
+        ltf_doc_info_map = get_ltf_doc_info_map_aida(parent_children_path)
+
+        # augment topics from annotations doc_lang_topic.tab
+        doc_lang_topic_file = ann_dir + "/docs/doc_lang_topic.tab"
+        doc_lang_topic_rows_dict = read_csv(doc_lang_topic_file)
+        rootid_dlt_map = {row['root_uid']: row for row in doc_lang_topic_rows_dict}
+        for val in ltf_doc_info_map.values():
+            if val['parent_uid'] in rootid_dlt_map:
+                val['topic'] = rootid_dlt_map[val['parent_uid']]['topic_id']
+
         # read the annotation files
         eve_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='evt')
         ent_mention_map = get_mention_map_from_ann(ann_dir, ltf_doc_info_map, doc_sent_map, mention_type='arg')
 
+        mention_map = {**eve_mention_map, **ent_mention_map}
+
+        # stores the event and entity relations
+        relations = get_relations(ann_dir)
+        relations_key = 'relations'
+        for relation in relations:
+            (head, label, tail) = relation
+            if head in mention_map:
+                if relations_key not in mention_map[head]:
+                    mention_map[head][relations_key] = []
+                mention_map[head][relations_key].append(relation)
+
+            if tail in mention_map:
+                if relations_key not in mention_map[tail]:
+                    mention_map[tail][relations_key] = []
+                mention_map[tail][relations_key].append(relation)
+
         # pickle them
-        pickle.dump(eve_mention_map, open(eve_mention_map_file, 'wb'))
-        pickle.dump(ent_mention_map, open(ent_mention_map_file, 'wb'))
+        pickle.dump(mention_map, open(mention_map_file, 'wb'))
 
-    # stores the event and entity relations
-    relations = []
-
-    # add the event arg relations - col names: eventmention_id	slot_type	argmention_id
-    relations.extend([(row['eventmention_id'], row['slot_type'], row['argmention_id'])
-                      for row in get_all_topic_rows(ann_dir, 'evt_slots')])
-
-    # add the entity-entity relations - col names: relationmention_id	slot_type	argmention_id
-    # each relationmention_id has two arguments - head and tail separately
-    rel_slots_rows = get_all_topic_rows(ann_dir, 'rel_slots')
-    rel_map = defaultdict(list)
-    for row in rel_slots_rows:
-        rel_map[row['relationmention_id']].append(row)
-    for rels in rel_map.values():
-        if len(rels) == 2:
-            rel1 = rels[0]
-            rel2 = rels[1]
-            # arg in rel2 is head in rel1 and vice versa
-            relations.append((rel2['argmention_id'], rel1['slot_type'], rel1['argmention_id']))
-            relations.append((rel1['argmention_id'], rel2['slot_type'], rel2['argmention_id']))
-
-    return eve_mention_map, ent_mention_map, relations, doc_sent_map
+    return mention_map, doc_sent_map
 
 
 if __name__ == '__main__':
@@ -403,8 +422,9 @@ if __name__ == '__main__':
     generate a common representation of events')
     parser.add_argument('--ann', '-a', help='Path to the LDC Annotation Directory')
     parser.add_argument('--source', '-s', help='Path to the LDC Source Directory')
+    parser.add_argument('--tmp', '-t', help='Working Folder')
     args = parser.parse_args()
     print("Using the Annotation Directory: ", args.ann)
     print("Using the Source     Directory: ", args.source)
-
-    extract_mentions(args.ann, args.source, './')
+    print("Using the Working    Directory: ", args.tmp)
+    extract_mentions(args.ann, args.source, args.tmp)

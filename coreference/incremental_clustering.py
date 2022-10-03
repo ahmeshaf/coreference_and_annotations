@@ -1,5 +1,6 @@
 from collections import defaultdict, Counter
 import random
+import numpy as np
 random.seed(42)
 from copy import copy
 
@@ -7,6 +8,14 @@ from copy import copy
 class Cluster:
     """
     A class of cluster of mentions
+
+    Attributes
+    ----------
+    mention_dicts: list of mention dicts
+    doc_ids: set of doc ids of the mentions
+    topic: str Topic ID
+    gold_cluster: str cluster ID from annotations
+    id_: id  unique ID for hashing the cluster
     """
     def __init__(self, mention_dict):
         self.mention_dicts = [mention_dict]
@@ -46,7 +55,7 @@ class Clustering:
     comparisons: int
 
     """
-    def __init__(self, mentions=None):
+    def __init__(self, mentions=None, working_folder='/tmp/'):
         if mentions is not None:
             self.mentions = mentions[:]
         self.lemma2clusters = defaultdict(set)
@@ -54,17 +63,23 @@ class Clustering:
         self.token2clusters = defaultdict(set)
         self.clusters = []
         self.comparisons = 0
+        self.trivial_non_trivial = []
+        # simulation based metrics
+        self.simulation_precision_total = 0.
+        self.simulation_recall = 0.
+        self.simulation_total_recall = 0.
+        self.working_folder = working_folder
 
     def load_state(self, other):
         """
-
+        load the attributes from a pickled class
         Parameters
         ----------
         other: Clustering
 
         Returns
         -------
-
+        None
         """
         self.mentions = other.mentions
         self.lemma2clusters = copy(other.lemma2clusters)
@@ -72,21 +87,21 @@ class Clustering:
         self.clusters = copy(other.clusters)
         self.comparisons = copy(other.comparisons)
 
-    def candidates(self, mention_dict):
+    def candidates(self, target_mention):
         """
-
+        Find a list of candidate Clusters for a target mention
         Parameters
         ----------
-        mention_dict: dict
+        target_mention: dict
 
         Returns
         -------
         list[Cluster]
         """
-        topic = mention_dict['topic']
-        lemma = mention_dict['lemma']
-        frames = mention_dict['frames']
-        sent_tokens = mention_dict['sentence']
+        topic = target_mention['topic']
+        lemma = target_mention['lemma']
+        # frames = target_mention['frames']
+        sent_tokens = target_mention['sentence_tokens']
 
         candidates = set()
         candidates.update(self.lemma2clusters[lemma])
@@ -95,7 +110,7 @@ class Clustering:
         for tok in sent_tokens:
             candidates.update(self.token2clusters[tok])
 
-        return [cand for cand in candidates if cand.topic == topic]
+        return [cand for cand in self.clusters if cand.topic == topic]
 
     def nearest_neighbors(self, mention_dict, men2id, similarity_matrix, top_n=3):
         topic = mention_dict['topic']
@@ -104,9 +119,9 @@ class Clustering:
 
         men_id = mention_dict['mention_id']
 
-        # sim values
+        # sim values by taking the max sim between the target and mentions of candidate
         similarities = [
-            max([similarity_matrix[men2id[men_id], men2id[m['mention_id']]] for m in clus.mention_dicts])
+            np.mean([similarity_matrix[men2id[men_id], men2id[m['mention_id']]] for m in clus.mention_dicts])
             for clus in possible_clusters
         ]
 
@@ -117,7 +132,8 @@ class Clustering:
     def update_cluster_maps(self, cluster, mention_dict):
         lemma = mention_dict['lemma']
         sent_tokens = mention_dict['sentence_tokens']
-        frames = mention_dict['frames']
+        # frames = mention_dict['frames']
+        frames = []
         self.lemma2clusters[lemma].add(cluster)
         for frame in frames:
             if frame is not None and frame != '':
@@ -135,20 +151,24 @@ class Clustering:
         self.update_cluster_maps(cluster, mention_dict)
 
     def run_clustering(self, mention_map, men2id, similarity_matrix,
-                       top_n=100, threshold=0.8, simulation=False,
+                       top_n=100, threshold=0.1, simulation=False,
                        random_run=False):
         while len(self.mentions) > 0:
-            mention = self.mentions.pop(0)
-            mention_dict = mention_map[mention]
+            target_mention = self.mentions.pop(0)
+            mention_dict = mention_map[target_mention]
             cluster_candidates = self.candidates(mention_dict)
 
             similarities = [
-                max([similarity_matrix[men2id[mention], men2id[m['mention_id']]] for m in clus.mention_dicts])
+                np.max([similarity_matrix[men2id[target_mention], men2id[m['mention_id']]] for m in clus.mention_dicts])
                 for clus in cluster_candidates
             ]
 
+            best_match_mentions = [max(clus.mention_dicts,
+                                key=lambda m: similarity_matrix[men2id[target_mention], men2id[m['mention_id']]])
+                            for clus in cluster_candidates]
+
             # zip candidate cluster with the similarity value
-            zipped_clusters = zip(cluster_candidates, similarities)
+            zipped_clusters = zip(cluster_candidates, best_match_mentions, similarities)
 
             # sort clusters based on similarity
             sorted_clusters = sorted(zipped_clusters, key=lambda x: -x[-1])
@@ -159,13 +179,51 @@ class Clustering:
                 sorted_clusters = zipped_clusters
 
             # pick top-n clusters
-            sorted_clusters = sorted_clusters[:top_n]
+            # sorted_clusters = sorted_clusters
 
             # variable to know if the mention was merged /w existing cluster
             is_merged = False
 
+            # pick the clusters after pruning based on threshold and top-n
+            pruned_clusters = [clus for clus in sorted_clusters[:top_n] if clus[-1] > threshold]
+
+            # simulation based results: comparisons, precision, recall
+            if simulation:
+                # cluster ids in pruned clusters (the coref candidate was found if matches with target)
+                pruned_clus_ids = [clus.gold_cluster for clus, _, _ in pruned_clusters]
+                # all cluster ids (to check if the coref cand was missed by pruning)
+                all_clus_ids = [clus.gold_cluster for clus, _, _ in sorted_clusters]
+
+                target_clus_id = str(mention_dict['gold_cluster'])
+                self.simulation_recall += int(target_clus_id in pruned_clus_ids)
+                self.simulation_total_recall += int(target_clus_id in all_clus_ids)
+                self.simulation_precision_total += int(len(pruned_clusters) > 0)
+
+                # first candidate is coreferent
+                if target_clus_id in pruned_clus_ids[:1]:
+                    _, triv_mention_pos, _ = pruned_clusters[0]
+                    # add a new pos datapoint of the form:
+                    # (target_mention, candidate_mention, is_trivial, is_coreferent)
+                    self.trivial_non_trivial.append([target_mention, triv_mention_pos['mention_id'], 'EASY', 'POS'])
+                    if len(sorted_clusters) > 1:
+                        _, triv_mention_neg, _ = sorted_clusters[-1]
+                        # add the last ranked candidate as a trivial non-coreferent
+                        self.trivial_non_trivial.append([target_mention, triv_mention_neg['mention_id'], 'EASY', 'NEG'])
+                elif len(sorted_clusters) > 0 and target_clus_id in all_clus_ids:
+                    _, non_triv_mention_pos, _ = sorted_clusters[all_clus_ids.index(target_clus_id)]
+                    self.trivial_non_trivial.append([target_mention, non_triv_mention_pos['mention_id'], 'HARD', 'POS'])
+
+                    if all_clus_ids.index(target_clus_id) > 0:
+                        _, non_triv_mention_neg, _ = sorted_clusters[0]
+                        self.trivial_non_trivial.append([target_mention, non_triv_mention_neg['mention_id'],
+                                                         'HARD', 'NEG'])
+                elif len(sorted_clusters) > 0:
+                    _, non_triv_mention_neg, _ = sorted_clusters[0]
+                    self.trivial_non_trivial.append([target_mention, non_triv_mention_neg['mention_id'],
+                                                     'HARD', 'NEG'])
+
             # iterate through the candidates, merge and break if suitable cluster is found
-            for clus, sim in sorted_clusters:
+            for i, (clus, max_mention, sim) in enumerate(pruned_clusters):
                 self.comparisons += 1
                 # merge if 1. running simulation and gold cluster matches
                 #       or 2. not running simulation and similarity is above threshold
@@ -178,19 +236,36 @@ class Clustering:
             if not is_merged:
                 self.add_cluster(mention_dict)
 
+        print(self.simulation_recall)
         # return clusters, labels
         return [men2id[m['mention_id']] for clus in self.clusters for m in clus.mention_dicts],\
                {
             m['mention_id']: clus_id for clus_id, clus in enumerate(self.clusters) for m in clus.mention_dicts
         }
 
+    def simulation_recall_func(self,):
+        return self.simulation_recall/self.simulation_total_recall
 
-def incremental_clustering(similarity_matrix, threshold, mentions, mention_map, men2id):
+    def simulation_precision(self):
+        if self.simulation_recall == 0.:
+            return 0.
+        return self.simulation_recall/self.comparisons
+
+    def simulation_comparisons(self):
+        return self.comparisons
+
+    def get_simulation_metrics(self):
+        return self.simulation_recall_func(), self.simulation_precision(), self.simulation_comparisons()
+
+
+def incremental_clustering(similarity_matrix, threshold, mentions, mention_map, men2id, top_n=10, simulation=False):
     clustering = Clustering(mentions)
     clusters, mention_clus_map = clustering.run_clustering(mention_map, men2id, similarity_matrix,
-                                                           threshold=threshold, simulation=False)
-
+                                                           threshold=threshold, top_n=top_n, simulation=simulation)
     # order the labels according to the mentions
     labels = [mention_clus_map[men] for men in mentions]
 
-    return clusters, labels
+    if not simulation:
+        return clusters, labels
+    else:
+        return clusters, labels, clustering

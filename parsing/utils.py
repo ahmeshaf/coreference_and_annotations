@@ -3,6 +3,8 @@ import spacy
 from nltk.corpus import wordnet as wn
 from nltk.corpus import lin_thesaurus as thes
 from nltk.corpus import framenet as fn
+from annotations.action_words import get_lexeme_fn
+from tqdm.autonotebook import tqdm
 
 
 def get_derivationally_related_verbs(spacy_doc):
@@ -48,6 +50,47 @@ def add_sentential_features(nlp, mention_map):
                 mention['sentence_tokens'].append(token.lemma_)
 
 
+POS_MAP = {
+    'NOUN': 'n',
+    'VERB': 'v',
+    'ADJ': 'a',
+}
+
+
+def get_lexeme_spacy(token):
+    """
+    Create a lexeme from spacy Token of the form 'lemma.pos_'
+
+    Parameters
+    ----------
+    token: spacy.tokens.Token
+
+    Returns
+    -------
+    str
+        A string of the form lemma.pos_ (e.g.: run.v, purchase.n, etc.)
+    """
+
+    return token.lemma_ + '.' + POS_MAP[token.pos_]
+
+
+def get_lexeme2frames_fn():
+    """
+    Generate a map of lexeme (lemma.pos) to possible frames in frame net
+
+    Returns
+    -------
+
+    """
+    lex2frames = {}
+    for lu in fn.lus():
+        lexeme = get_lexeme_fn(lu)
+        if lexeme not in lex2frames:
+            lex2frames[lexeme] = []
+        lex2frames[lexeme].append(lu.frame.name)
+    return lex2frames
+
+
 def add_lexical_features(nlp, mention_map):
     """
     Add lemma, derivational verb, etc
@@ -60,26 +103,25 @@ def add_lexical_features(nlp, mention_map):
     -------
     None
     """
-    for men_id, mention in mention_map.items():
+    for men_id, mention in tqdm(list(mention_map.items()), 'Adding Lexical Features'):
         # parse spacy over mention_text
         mention_nlp = nlp(mention['mention_text'])
-        # # default lemma if mention_text is just one token excluding stop word
-        # lemma = ' '.join([t.lemma_ for t in mention_nlp if not t.is_punct and not t.is_punct])
-        # lemma_vector = mention_nlp.vector
-        # # when there are multiple tokens in mention_text
-        # for tok in mention_nlp:
-        #     if not tok.is_stop and not tok.is_punct:
-        #         lemma = tok.head.lemma_
-        #         lemma_vector = tok.vector
+
+        # mention_nlp_no_sw = nlp(' '.join([w.text for w in mention_nlp if not w.is_stop]))
+        #
+        # # if mention is a stop word
+        # if mention_nlp_no_sw.text == '':
+        #     mention['lemma'] = ""
+        #     mention['frames'] = set()
+        #     continue
+
+        # get lemma
         mention['lemma'] = mention_nlp[:].root.lemma_
 
+        # get POS
+        mention['pos'] = mention_nlp[:].root.pos_
+
+        # get framenet frames
         frames = set([f.name for f in fn.frames_by_lemma(mention['lemma'])])
         mention['frames'] = frames
-
-        # mention['lemma_vector'] = lemma_vector
-
-        # add derivational verbs
-        # mention['derivational_verbs'] = []
-        # if lemma.strip() != '':
-        #     mention['derivational_verbs'] = get_derivationally_related_verbs(nlp(lemma))
-
+        
