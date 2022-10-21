@@ -1,5 +1,6 @@
 import os
 import sys
+
 parent_path = os.path.abspath(os.path.dirname(os.path.abspath(__file__)) + '/../')
 sys.path.append(parent_path)
 
@@ -7,7 +8,6 @@ import os.path
 import pickle
 
 from sklearn.model_selection import train_test_split
-import pyhocon
 from coreference.models import LongFormerCrossEncoder
 import torch
 import random
@@ -45,13 +45,14 @@ def f1_score(predicted_labels, true_labels):
     return 2 * P * R / (P + R)
 
 
-def load_data(trivial_non_trivial_path):
+def load_easy_hard_data(trivial_non_trivial_path):
     all_examples = []
+    label_map = {'HARD': 0, 'EASY': 1}
     with open(trivial_non_trivial_path) as tnf:
         for line in tnf:
             row = line.strip().split(',')
             mention_pair = row[:2]
-            triviality_label = int(row[2])
+            triviality_label = label_map[row[2]]
             all_examples.append((mention_pair, triviality_label))
 
     return all_examples
@@ -74,8 +75,7 @@ def split_data(all_examples, dev_ratio=0.2):
     return train_test_split(pairs, labels, test_size=dev_ratio)
 
 
-def tokenize(tokenizer, mention_pairs, mention_map, m_end, max_sentence_len=None):
-
+def tokenize(tokenizer, mention_pairs, mention_map, m_end, max_sentence_len=80):
     if max_sentence_len is None:
         max_sentence_len = tokenizer.model_max_length
 
@@ -103,9 +103,12 @@ def tokenize(tokenizer, mention_pairs, mention_map, m_end, max_sentence_len=None
         input_ids_truncated = []
         for input_id in input_ids:
             m_end_index = input_id.index(m_end)
-            in_truncated = input_id[m_end_index-(max_sentence_len//4): m_end_index] + \
-                           input_id[m_end_index: m_end_index + (max_sentence_len//4)]
-            in_truncated = in_truncated + [tokenizer.pad_token_id]*(max_sentence_len//2 - len(in_truncated))
+
+            curr_start_index = max(0, m_end_index - (max_sentence_len // 4))
+
+            in_truncated = input_id[curr_start_index: m_end_index] + \
+                           input_id[m_end_index: m_end_index + (max_sentence_len // 4)]
+            in_truncated = in_truncated + [tokenizer.pad_token_id] * (max_sentence_len // 2 - len(in_truncated))
             input_ids_truncated.append(in_truncated)
 
         return torch.LongTensor(input_ids_truncated)
@@ -206,7 +209,7 @@ def forward_ab(parallel_model, ab_dict, device, indices, lm_only=False):
     arg2_ab.to(device)
 
     return parallel_model(batch_tensor_ab, attention_mask=batch_am_ab, position_ids=batch_posits_ab,
-                               global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab, lm_only=lm_only)
+                          global_attention_mask=am_g_ab, arg1=arg1_ab, arg2=arg2_ab, lm_only=lm_only)
 
 
 def generate_lm_out(parallel_model, device, dev_ab, dev_ba, batch_size):
@@ -249,7 +252,7 @@ def frozen_predict(parallel_model, device, dev_ab, dev_ba, batch_size, lm_output
             ba_out.to(device)
             scores_ab = parallel_model(ab_out, pre_lm_out=True)
             scores_ba = parallel_model(ba_out, pre_lm_out=True)
-            scores_mean = (scores_ab + scores_ba)/2
+            scores_mean = (scores_ab + scores_ba) / 2
             batch_predictions = (scores_mean > 0.5).detach().cpu()
             predictions.append(batch_predictions)
 
@@ -278,17 +281,17 @@ def predict(parallel_model, device, dev_ab, dev_ba, batch_size):
 
 
 def train_frozen(train_pairs,
-          train_labels,
-          dev_pairs,
-          dev_labels,
-          parallel_model,
-          mention_map,
-          working_folder,
-          device,
-          force_lm_output=False,
-          batch_size=30,
-          n_iters=10,
-          lr_class=0.001):
+                 train_labels,
+                 dev_pairs,
+                 dev_labels,
+                 parallel_model,
+                 mention_map,
+                 working_folder,
+                 device,
+                 force_lm_output=False,
+                 batch_size=30,
+                 n_iters=10,
+                 lr_class=0.001):
     bce_loss = torch.nn.BCELoss()
     mse_loss = torch.nn.MSELoss()
     optimizer = torch.optim.AdamW([
@@ -379,7 +382,7 @@ def train(train_pairs,
         {'params': parallel_model.module.linear.parameters(), 'lr': lr_class}
     ])
 
-    # all_examples = load_data(trivial_non_trivial_path)
+    # all_examples = load_easy_hard_data(trivial_non_trivial_path)
     # train_pairs, dev_pairs, train_labels, dev_labels = split_data(all_examples, dev_ratio=dev_ratio)
 
     tokenizer = parallel_model.module.tokenizer
@@ -404,11 +407,11 @@ def train(train_pairs,
             scores_ab = forward_ab(parallel_model, train_ab, device, batch_indices)
             scores_ba = forward_ab(parallel_model, train_ba, device, batch_indices)
 
-            batch_labels = train_labels[batch_indices].to(device)
+            batch_labels = train_labels[batch_indices].reshape((-1, 1)).to(device)
 
             scores_mean = (scores_ab + scores_ba) / 2
 
-            loss = bce_loss(torch.squeeze(scores_mean), batch_labels) + mse_loss(scores_ab, scores_ba)
+            loss = bce_loss(scores_mean, batch_labels) + mse_loss(scores_ab, scores_ba)
 
             loss.backward()
 
@@ -444,13 +447,13 @@ def train(train_pairs,
 
 def batching(n, batch_size, min_batch):
     new_batch_size = batch_size
-    while n % new_batch_size < min_batch:
+    while n % new_batch_size < min_batch != 1:
         new_batch_size -= 1
     return new_batch_size
 
 
 def predict_trained_model(model_name, linear_weights_path, test_set_path, working_folder):
-    test_pairs, test_labels = zip(*load_data(test_set_path))
+    test_pairs, test_labels = zip(*load_easy_hard_data(test_set_path))
     test_labels = torch.LongTensor(test_labels)
     # read annotations
     ecb_mention_map_path = working_folder + '/mention_map.pkl'
@@ -485,9 +488,9 @@ if __name__ == '__main__':
     triv_train_path = parent_path + '/parsing/ecb/trivial_non_trivial_train.csv'
     triv_dev_path = parent_path + '/parsing/ecb/trivial_non_trivial_dev.csv'
 
-    train_pairs, train_labels = zip(*load_data(triv_train_path))
-    dev_pairs, dev_labels = zip(*load_data(triv_dev_path))
-    
+    train_pairs, train_labels = zip(*load_easy_hard_data(triv_train_path))
+    dev_pairs, dev_labels = zip(*load_easy_hard_data(triv_dev_path))
+
     train_pairs = list(train_pairs)
     train_labels = list(train_labels)
 
@@ -495,7 +498,7 @@ if __name__ == '__main__':
     model_name = 'allenai/longformer-base-4096'
     scorer_module = LongFormerCrossEncoder(is_training=True, model_name=model_name).to(device)
 
-    device_ids = list(range(4))
+    device_ids = list(range(1))
 
     parallel_model = torch.nn.DataParallel(scorer_module, device_ids=device_ids)
     parallel_model.module.to(device)
@@ -514,13 +517,12 @@ if __name__ == '__main__':
         val['mention_id'] = key
 
     train(train_pairs,
-                 train_labels,
-                 dev_pairs,
-                 dev_labels,
-                 parallel_model,
-                 ecb_mention_map,
-                 working_folder,
-                 device, batch_size=16, lr_class=0.0001, lr_lm=0.000001,
-                 # force_lm_output=False,
-                 n_iters=100)
-
+          train_labels,
+          dev_pairs,
+          dev_labels,
+          parallel_model,
+          ecb_mention_map,
+          working_folder,
+          device, batch_size=2, lr_class=0.0001, lr_lm=0.000001,
+          # force_lm_output=False,
+          n_iters=100)

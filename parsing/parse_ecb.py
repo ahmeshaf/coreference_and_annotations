@@ -9,10 +9,33 @@ import spacy
 from bs4 import BeautifulSoup
 from copy import deepcopy
 from tqdm.autonotebook import tqdm
+from spacy.tokens import Doc
 
 VALIDATION = ['2', '5', '12', '18', '21', '23', '34', '35']
 TRAIN = [str(i) for i in range(1, 36) if str(i) not in VALIDATION]
 TEST = [str(i) for i in range(36, 46)]
+
+
+class WhitespaceTokenizer:
+    def __init__(self, vocab):
+        self.vocab = vocab
+
+    def __call__(self, text):
+        words = text.split(" ")
+        spaces = [True] * len(words)
+        # Avoid zero-length tokens
+        for i, word in enumerate(words):
+            if word == "":
+                words[i] = " "
+                spaces[i] = False
+        # Remove the final trailing space
+        if words[-1] == " ":
+            words = words[0:-1]
+            spaces = spaces[0:-1]
+        else:
+            spaces[-1] = False
+
+        return Doc(self.vocab, words=words, spaces=spaces)
 
 
 def get_sent_map_simple(doc_bs):
@@ -88,7 +111,7 @@ def parse_annotations(annotation_folder, output_folder, spacy_model='en_core_web
     singleton_idx = 10000000000
 
     for ann_file in tqdm(list(glob.glob(ecb_plus_folder + "/*/*.xml")), desc='Reading ECB Corpus'):
-        ann_bs = BeautifulSoup(open(ann_file, 'r').read())
+        ann_bs = BeautifulSoup(open(ann_file, 'r').read(), features="lxml")
         doc_name = ann_bs.find('document')['doc_name']
         topic = doc_name.split('_')[0]
         # add document in doc_sent_map
@@ -213,6 +236,7 @@ def add_lexical_features(nlp, mention_map):
     mentions = list(mention_map.values())
 
     mention_sentences = [mention['sentence'] for mention in mentions]
+    nlp.tokenizer = WhitespaceTokenizer(nlp.vocab)
 
     for i, doc in tqdm(enumerate(nlp.pipe(mention_sentences)),
                        total=len(mention_sentences),
@@ -228,8 +252,8 @@ def add_lexical_features(nlp, mention_map):
         # add char spans of root
         root_index = mention_span.root.i
         root_span = doc[root_index:root_index+1]
-        mention['start_char'] = root_span.start_char
-        mention['end_char'] = root_span.end_char
+        mention['start_char'] = mention_span.start_char
+        mention['end_char'] = mention_span.end_char
 
         # get lemma
         mention['lemma'] = mention_span.root.lemma_
@@ -242,6 +266,6 @@ def add_lexical_features(nlp, mention_map):
 
 
 if __name__ == '__main__':
-    annotation_path = "/Users/rehan/workspace/data/ECB+_LREC2014"
+    annotation_path = "../ecbPlus/ECB+_LREC2014"
     working_folder = "./ecb/"
     parse_annotations(annotation_path, working_folder, spacy_model='en_core_web_md')
