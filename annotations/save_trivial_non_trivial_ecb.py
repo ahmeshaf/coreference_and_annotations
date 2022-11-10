@@ -52,11 +52,16 @@ def save_easy_hard(dataset, men_type='evt', split='train', threshold=0.2):
     for key, val in ecb_mention_map.items():
         val['mention_id'] = key
 
-    curr_mention_map = {m_id: val for m_id, val in ecb_mention_map.items() if val['men_type'] == men_type and
-                        val['split'] == split and len(val['mention_text'].split()) == 1}
+    curr_mention_map = {m_id: val for m_id, val in ecb_mention_map.items() if val['men_type'] == men_type
+                        and val['split'] == split
+                        # and len(val['mention_text'].split()) == 1
+                        }
 
     single_word_eve = [eve for eve, val in curr_mention_map.items() if len(val['mention_text'].split()) == 1]
     multi_word_eve = [eve for eve, val in curr_mention_map.items() if len(val['mention_text'].split()) > 1]
+
+    with open('test_mention.txt', 'w') as tff:
+        tff.write('\n'.join([curr_mention_map[eve]['mention_text'] for eve in multi_word_eve]))
 
     print('total eves:', len(curr_mention_map))
     print('single word eves:', len(single_word_eve))
@@ -77,6 +82,7 @@ def save_easy_hard(dataset, men_type='evt', split='train', threshold=0.2):
                 if i != j:
                     mention_pairs.append((list_mentions[i], list_mentions[j]))
 
+    # similarities = np.array([0]*len(mention_pairs))
     similarities = np.array(get_mention_pair_similarity_lemma(mention_pairs, ecb_mention_map, [], working_folder))
 
     print(np.min(similarities))
@@ -95,10 +101,18 @@ def save_easy_hard(dataset, men_type='evt', split='train', threshold=0.2):
 
     fp_men_pairs = [mention_pairs[i] for i in false_positives[0]]
 
-    with open('false_neg.tsv', 'w') as ff:
-        ff.write('\n'.join([
-            '\t'.join([ecb_mention_map[m1]['bert_sentence'], ecb_mention_map[m2]['bert_sentence']])
-            for m1, m2 in fp_men_pairs]))
+    with open(working_folder + f'/lemma_balanced_tp_fp_{split}.tsv', 'w') as tpf:
+        tps = np.where(np.logical_and(lemma_coref, ground_truth))
+        fps = np.where(np.logical_and(lemma_coref, np.logical_not(ground_truth)))
+        tps_pairs = [mention_pairs[i] for i in tps[0]]
+        fps_pairs = [mention_pairs[i] for i in fps[0]]
+        tpf.write(
+            '\n'.join(['\t'.join([m1, m2, 'POS']) for m1, m2 in tps_pairs])
+        )
+        tpf.write('\n')
+        tpf.write(
+            '\n'.join(['\t'.join([m1, m2, 'NEG']) for m1, m2 in fps_pairs])
+        )
 
     print(len(similarities))
 
@@ -106,4 +120,4 @@ def save_easy_hard(dataset, men_type='evt', split='train', threshold=0.2):
 ann_dir = "/Users/rehan/workspace/data/ECB+_LREC2014"
 working_folder = "../parsing/ecb"
 
-save_easy_hard(None)
+save_easy_hard(None,split='dev')
