@@ -15,6 +15,7 @@ from evaluations.eval import *
 import numpy as np
 from coreference.incremental_clustering import incremental_clustering
 from sklearn.cluster import AgglomerativeClustering
+from nltk.corpus import wordnet as wn
 
 
 def get_cosine_similarities(mention_pairs, vector_map):
@@ -88,7 +89,7 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
     within_doc_similarities = []
 
     doc_sent_map = pickle.load(open(working_folder + '/doc_sent_map.pkl', 'rb'))
-    doc_sims = pickle.load(open(working_folder + '/doc_sims_path.pkl', 'rb'))
+    # doc_sims = pickle.load(open(working_folder + '/doc_sims_path.pkl', 'rb'))
     doc_ids = []
 
     for doc_id, _ in list(doc_sent_map.items()):
@@ -107,17 +108,53 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
         def jc(arr1, arr2):
             return len(set.intersection(arr1, arr2))/len(set.union(arr1, arr2))
 
-        sent_sim = jc(set(men_map1['sentence_tokens']), set(men_map2['sentence_tokens']))
-        doc_sim = doc_sims[doc2id[men_map1['doc_id']], doc2id[men_map2['doc_id']]]
+        doc_id1 = men_map1['doc_id']
+        sent_id1 = int(men_map1['sentence_id'])
+        all_sent_ids1 = {str(sent_id1 - 1), str(sent_id1), str(sent_id1 + 1)}
+
+        doc_id2 = men_map2['doc_id']
+        sent_id2 = int(men_map2['sentence_id'])
+        all_sent_ids2 = {str(sent_id2 - 1), str(sent_id2), str(sent_id2 + 1)}
+
+        sentence_tokens1 = [tok for sent_id in all_sent_ids1 if sent_id in doc_sent_map[doc_id1]
+                            for tok in doc_sent_map[doc_id1][sent_id]['sentence_tokens']]
+
+        sentence_tokens2 = [tok for sent_id in all_sent_ids2 if sent_id in doc_sent_map[doc_id2]
+                            for tok in doc_sent_map[doc_id2][sent_id]['sentence_tokens']]
+
+        sent_sim = jc(set(sentence_tokens1), set(sentence_tokens2))
+        # sent_sim = jc(set(men_map1['sentence_tokens']), set(men_map2['sentence_tokens']))
+        # doc_sim = doc_sims[doc2id[men_map1['doc_id']], doc2id[men_map2['doc_id']]]
         lemma_sim = float(men_map1['lemma'] in men_text2 or men_map2['lemma'] in men_text1)
+
+        def are_synonyms(word1, word2):
+            word1_lemmas = set([lem for syn in wn.synsets(word1) for lem in syn.lemma_names()])
+            word2_lemmas = set([lem for syn in wn.synsets(word2) for lem in syn.lemma_names()])
+            return len(word1_lemmas.intersection(word2_lemmas)) > 0
+
+        # check_syn = are_synonyms(men_map1['lemma'].lower(), men_map2['lemma'].lower())
+
+        def are_derivationally_same(word1, word2):
+            word1_lemmas = [lem for syn in wn.synsets(word1) for lem in syn.lemmas()]
+            word2_lemmas = [lem for syn in wn.synsets(word2) for lem in syn.lemmas()]
+
+            if len(word1_lemmas) == 0 or len(word2_lemmas) == 0:
+                return 0
+
+            word1_deriv = [w.name() for w in word1_lemmas] + [d.name() for lem in word1_lemmas for d in lem.derivationally_related_forms()]
+            word2_deriv = [w.name() for w in word2_lemmas] + [d.name() for lem in word2_lemmas for d in lem.derivationally_related_forms()]
+
+            return len(set(word1_deriv).intersection(word2_deriv)) > 0
+
+        # check_deriv = are_derivationally_same(men_map1['lemma'].lower(), men_map2['lemma'].lower())
 
         same_doc = float(men_map1['doc_id'] == men_map2['doc_id'])
 
         # similarities.append(sent_sim + doc_sim + lemma_sim)
-        similarities.append((lemma_sim + 0.3*sent_sim)/2)
+        # similarities.append((lemma_sim + 0.3*sent_sim)/2)
+        similarities.append((lemma_sim) and (sent_sim > 0.15))
         # similarities.append((lemma_sim + 0.3*sent_sim)/2)
         within_doc_similarities.append(same_doc)
-
 
         # doc_plus_sent = 0. + doc_sim + sent_sim
         # if men_map1['lemma'] in men_text2 or men_map2['lemma'] in men_text1:
@@ -246,7 +283,7 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
 
     # clustering algorithm and mention cluster map
     if cluster_algo == 'cc':
-        clusters, labels = cluster_cc(similarity_matrix)
+        clusters, labels = cluster_cc(similarity_matrix, threshold)
     elif cluster_algo == 'agglo':
         clusters, labels = cluster_agglo(similarity_matrix)
     elif cluster_algo == 'inc':

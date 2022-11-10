@@ -4,7 +4,8 @@ import pickle
 import os
 
 
-def run_coreference(ann_dir, working_folder, men_type='evt', split='dev'):
+def run_coreference(ann_dir, working_folder, men_type='evt', split='dev',
+                    algo='cc', sim='lemma', simulation=False, threshold=0.6):
     """
 
     Parameters
@@ -29,11 +30,9 @@ def run_coreference(ann_dir, working_folder, men_type='evt', split='dev'):
     curr_mention_map = {m_id: val for m_id, val in ecb_mention_map.items() if val['men_type'] == men_type and
                                                     val['split'] == split}
 
-    simulation = True
-
     if not simulation:
         coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type,
-                    cluster_algo='inc', threshold=0.4, simulation=simulation, top_n=3)
+                    cluster_algo=algo, threshold=threshold, sim_type=sim, simulation=simulation, top_n=3)
     else:
         simulation_metrics = coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type,
                                          cluster_algo='inc', threshold=-1, simulation=simulation, top_n=5)
@@ -84,4 +83,16 @@ def comparisons_plot(results):
     plt.show()
 
 
-_generate_simulation_results_plot()
+def run_coref():
+    ann_dir = "/Users/rehan/workspace/data/ECB+_LREC2014"
+    working_folder = "../parsing/ecb"
+    split = 'train'
+    men_type = 'evt'
+    clus_algo = 'cc'
+    similarity = 'lemma'
+    thres = 0.55
+    run_coreference(ann_dir, working_folder, men_type, split, clus_algo, similarity, threshold=thres)
+
+
+# _generate_simulation_results_plot()
+run_coref()
