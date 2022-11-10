@@ -132,7 +132,7 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
             word2_lemmas = set([lem for syn in wn.synsets(word2) for lem in syn.lemma_names()])
             return len(word1_lemmas.intersection(word2_lemmas)) > 0
 
-        # check_syn = are_synonyms(men_map1['lemma'].lower(), men_map2['lemma'].lower())
+        check_syn = are_synonyms(men_map1['lemma'].lower(), men_map2['lemma'].lower())
 
         def are_derivationally_same(word1, word2):
             word1_lemmas = [lem for syn in wn.synsets(word1) for lem in syn.lemmas()]
@@ -152,7 +152,7 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
 
         # similarities.append(sent_sim + doc_sim + lemma_sim)
         # similarities.append((lemma_sim + 0.3*sent_sim)/2)
-        similarities.append((lemma_sim) and (sent_sim > 0.15))
+        similarities.append((lemma_sim or check_syn) and (sent_sim > 0.14))
         # similarities.append((lemma_sim + 0.3*sent_sim)/2)
         within_doc_similarities.append(same_doc)
 
