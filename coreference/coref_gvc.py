@@ -317,7 +317,7 @@ def run_coreference(ann_dir, source_dir, working_folder, men_type='evt'):
     
      
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Run and evaluate cross-document coreference resolution on                                                  GVC Annotations')
+    parser = argparse.ArgumentParser(description='Run and evaluate cross-document coreference resolution on GVC Annotations')
     parser.add_argument('--ann', '-a', help='Path to the GVC Gold Annotation Directory')
     parser.add_argument('--source', '-s', help='Path to the GVC Verbose meta-data Directory')
     parser.add_argument('--tmp_folder', '-t', default='./tmp', help='Path to a working directory')
