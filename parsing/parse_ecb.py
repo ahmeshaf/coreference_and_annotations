@@ -9,10 +9,33 @@ import spacy
 from bs4 import BeautifulSoup
 from copy import deepcopy
 from tqdm.autonotebook import tqdm
+from spacy.tokens import Doc
 
 VALIDATION = ['2', '5', '12', '18', '21', '23', '34', '35']
 TRAIN = [str(i) for i in range(1, 36) if str(i) not in VALIDATION]
 TEST = [str(i) for i in range(36, 46)]
+
+
+class WhitespaceTokenizer:
+    def __init__(self, vocab):
+        self.vocab = vocab
+
+    def __call__(self, text):
+        words = text.split(" ")
+        spaces = [True] * len(words)
+        # Avoid zero-length tokens
+        for i, word in enumerate(words):
+            if word == "":
+                words[i] = " "
+                spaces[i] = False
+        # Remove the final trailing space
+        if words[-1] == " ":
+            words = words[0:-1]
+            spaces = spaces[0:-1]
+        else:
+            spaces[-1] = False
+
+        return Doc(self.vocab, words=words, spaces=spaces)
 
 
 def get_sent_map_simple(doc_bs):
@@ -88,7 +111,7 @@ def parse_annotations(annotation_folder, output_folder, spacy_model='en_core_web
     singleton_idx = 10000000000
 
     for ann_file in tqdm(list(glob.glob(ecb_plus_folder + "/*/*.xml")), desc='Reading ECB Corpus'):
-        ann_bs = BeautifulSoup(open(ann_file, 'r').read())
+        ann_bs = BeautifulSoup(open(ann_file, 'r').read(), features="lxml")
         doc_name = ann_bs.find('document')['doc_name']
         topic = doc_name.split('_')[0]
         # add document in doc_sent_map
@@ -184,12 +207,31 @@ def parse_annotations(annotation_folder, output_folder, spacy_model='en_core_web
             # add into mention map
             mention_map[doc_name + '_' + m_id] = mention
 
+    nlp = spacy.load(spacy_model)
+    nlp.tokenizer = WhitespaceTokenizer(nlp.vocab)
+
+    sent_ids = [(doc_id, sent_id) for doc_id, sent_map in doc_sent_map.items()
+                for sent_id, sent_val in sent_map.items()]
+    sentences = [sent_val['sentence'] for doc_id, sent_map in doc_sent_map.items()
+                 for sent_id, sent_val in sent_map.items()]
+
+    sent_tuples = list(zip(sentences, sent_ids))
+
+    sent_doc_map = {}
+    for doc, sent_id in tqdm(nlp.pipe(sent_tuples, as_tuples=True), desc='spacifying docs', total=len(sent_tuples)):
+        sent_doc_map[sent_id] = doc
+
+    for doc_id, sent_map in doc_sent_map.items():
+        for sent_id, sent_val in sent_map.items():
+            sent_val['sentence_tokens'] = [w.lemma_.lower() for w in sent_doc_map[doc_id, sent_id] if (not (w.is_stop or w.is_punct)) or
+                                           w.lemma_.lower() in {'he', 'she', 'his', 'him', 'her'}]
+
     # save doc_sent_map
     pickle.dump(doc_sent_map, open(output_folder + '/doc_sent_map.pkl', 'wb'))
 
     # lexical features
-    nlp = spacy.load(spacy_model)
-    add_lexical_features(nlp, mention_map)
+
+    add_lexical_features(mention_map, sent_doc_map)
 
     # save pickle
     pickle.dump(mention_map, open(output_folder + '/mention_map.pkl', 'wb'))
@@ -197,7 +239,7 @@ def parse_annotations(annotation_folder, output_folder, spacy_model='en_core_web
     return mention_map
 
 
-def add_lexical_features(nlp, mention_map):
+def add_lexical_features(mention_map, sent_doc_map):
     """
     Add lemma, derivational verb, etc
     Parameters
@@ -213,35 +255,39 @@ def add_lexical_features(nlp, mention_map):
     mentions = list(mention_map.values())
 
     mention_sentences = [mention['sentence'] for mention in mentions]
+    # nlp.tokenizer = WhitespaceTokenizer(nlp.vocab)
 
-    for i, doc in tqdm(enumerate(nlp.pipe(mention_sentences)),
-                       total=len(mention_sentences),
-                       desc='Adding Lexical Features'):
-        mention = mentions[i]
-
+    for mention in mentions:
+        # mention = mentions[i]
+        doc = sent_doc_map[mention['doc_id'], mention['sentence_id']]
         # get mention span
         mention_span = doc[mention['start']:mention['end']+1]
 
-        if mention_span.text == 'hearing':
-            print(mention_span.root.lemma_)
+        if len(mention['mention_text'].split()) > 1:
+            root_span = max(mention_span, key=lambda x: len(x))
+        else:
+            root_span = mention_span.root
 
         # add char spans of root
-        root_index = mention_span.root.i
-        root_span = doc[root_index:root_index+1]
-        mention['start_char'] = root_span.start_char
-        mention['end_char'] = root_span.end_char
+        # root_index = mention_span.root.i
+        # root_span = doc[root_index:root_index+1]
+        mention['start_char'] = mention_span.start_char
+        mention['end_char'] = mention_span.end_char
 
         # get lemma
-        mention['lemma'] = mention_span.root.lemma_
+        mention['lemma'] = root_span.lemma_
 
         # lemma_start and end chars
-        mention['pos'] = mention_span.root.pos_
+        mention['pos'] = root_span.pos_
 
         # sentence tokens
-        mention['sentence_tokens'] = [w.lemma_.lower() for w in doc if not (w.is_stop or w.is_punct)]
+        mention['sentence_tokens'] = [w.lemma_.lower() for w in doc if (not (w.is_stop or w.is_punct)) or
+                                      w.lemma_.lower() in {'he', 'she', 'his', 'him', 'her'}]
+
+        mention['has_pron'] = len(set(mention['sentence_tokens']).intersection({'he', 'she', 'his', 'him', 'her'})) > 0
 
 
 if __name__ == '__main__':
-    annotation_path = "/Users/rehan/workspace/data/ECB+_LREC2014"
+    annotation_path = "../ecbPlus/ECB+_LREC2014"
     working_folder = "./ecb/"
     parse_annotations(annotation_path, working_folder, spacy_model='en_core_web_md')
