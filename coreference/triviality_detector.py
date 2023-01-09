@@ -3,16 +3,16 @@ import sys
 
 parent_path = os.path.abspath(os.path.dirname(os.path.abspath(__file__)) + '/../')
 sys.path.append(parent_path)
-
 import os.path
 import pickle
-
 from sklearn.model_selection import train_test_split
-from coreference.models import LongFormerCrossEncoder
+from coreference.models import LongFormerCrossEncoder, CrossEncoderTriplet
 import torch
 import random
 from tqdm.autonotebook import tqdm
 from parsing.parse_ecb import parse_annotations
+from torch import nn
+import numpy as np
 
 
 def accuracy(predicted_labels, true_labels):
@@ -58,6 +58,41 @@ def load_easy_hard_data(trivial_non_trivial_path):
     return all_examples
 
 
+def load_lemma_dataset(tsv_path, force_balance=False):
+    all_examples = []
+    label_map = {'POS': 1, 'NEG': 0}
+    with open(tsv_path) as tnf:
+        for line in tnf:
+            row = line.strip().split('\t')
+            mention_pair = row[:2]
+            label = label_map[row[2]]
+            all_examples.append((mention_pair, label))
+    if force_balance:
+        from collections import defaultdict
+        import random
+        random.seed(42)
+        label2eg = defaultdict(list)
+
+        for eg in all_examples:
+            label2eg[eg[1]].append(eg)
+
+        min_label = min(label2eg.keys(), key=lambda x: len(label2eg[x]))
+        min_label_len = len(label2eg[min_label])
+
+        max_eg_len = max([len(val) for val in label2eg.values()])
+        random_egs = random.choices(label2eg[min_label], k=max_eg_len-min_label_len)
+        all_examples.extend(random_egs)
+
+        label2eg = defaultdict(list)
+
+        for eg in all_examples:
+            label2eg[eg[1]].append(eg)
+
+        # print([len(val) for val in label2eg.values()])
+
+    return all_examples
+
+
 def print_label_distri(labels):
     label_count = {}
     for label in labels:
@@ -73,6 +108,79 @@ def print_label_distri(labels):
 def split_data(all_examples, dev_ratio=0.2):
     pairs, labels = zip(*all_examples)
     return train_test_split(pairs, labels, test_size=dev_ratio)
+
+
+def tokenize_triplets(tokenizer, mention_triplets, mention_map, m_end, text_id='bert_sentence', max_sentence_len=80):
+    if max_sentence_len is None:
+        max_sentence_len = tokenizer.model_max_length
+
+    triplet_bert_instances = []
+
+    doc_start = '<doc-s>'
+    doc_end = '</doc-s>'
+
+    for (a, b, c) in mention_triplets:
+        sentence_a = mention_map[a][text_id]
+        sentence_b = mention_map[b][text_id]
+        sentence_c = mention_map[c][text_id]
+
+        def make_instance(sent_a, sent_b):
+            return ' '.join(['<g>', doc_start, sent_a, doc_end]), \
+                   ' '.join([doc_start, sent_b, doc_end])
+
+        instance_aa = make_instance(sentence_a, sentence_a)
+        instance_ab = make_instance(sentence_a, sentence_b)
+        instance_ac = make_instance(sentence_a, sentence_c)
+
+        triplet_bert_instances.append((instance_aa, instance_ab, instance_ac))
+
+        # pairwise_bert_instances_ab.append(instance_ab)
+
+        # instance_ba = make_instance(sentence_b, sentence_a)
+        # pairwise_bert_instances_ba.append(instance_ba)
+
+    def truncate_with_mentions(input_ids):
+        input_ids_truncated = []
+        for input_id in input_ids:
+            m_end_index = input_id.index(m_end)
+
+            curr_start_index = max(0, m_end_index - (max_sentence_len // 4))
+
+            in_truncated = input_id[curr_start_index: m_end_index] + \
+                           input_id[m_end_index: m_end_index + (max_sentence_len // 4)]
+            in_truncated = in_truncated + [tokenizer.pad_token_id] * (max_sentence_len // 2 - len(in_truncated))
+            input_ids_truncated.append(in_truncated)
+
+        return torch.LongTensor(input_ids_truncated)
+
+    def ab_tokenized(pair_wise_instances):
+        instances_a, instances_b = zip(*pair_wise_instances)
+
+        tokenized_a = tokenizer(list(instances_a), add_special_tokens=False)
+        tokenized_b = tokenizer(list(instances_b), add_special_tokens=False)
+
+        tokenized_a = truncate_with_mentions(tokenized_a['input_ids'])
+        positions_a = torch.arange(tokenized_a.shape[-1]).expand(tokenized_a.shape)
+        tokenized_b = truncate_with_mentions(tokenized_b['input_ids'])
+        positions_b = torch.arange(tokenized_b.shape[-1]).expand(tokenized_b.shape)
+
+        tokenized_ab_ = torch.hstack((tokenized_a, tokenized_b))
+        positions_ab = torch.hstack((positions_a, positions_b))
+
+        tokenized_ab_dict = {'input_ids': tokenized_ab_,
+                             'attention_mask': (tokenized_ab_ != tokenizer.pad_token_id),
+                             'position_ids': positions_ab
+                             }
+
+        return tokenized_ab_dict
+
+    all_aa, all_ab, all_ac = zip(*triplet_bert_instances)
+
+    tokenized_aa = ab_tokenized(all_aa)
+    tokenized_ab = ab_tokenized(all_ab)
+    tokenized_ac = ab_tokenized(all_ac)
+
+    return tokenized_aa, tokenized_ab, tokenized_ac
 
 
 def tokenize(tokenizer, mention_pairs, mention_map, m_end, max_sentence_len=80):
@@ -252,7 +360,8 @@ def frozen_predict(parallel_model, device, dev_ab, dev_ba, batch_size, lm_output
             ba_out.to(device)
             scores_ab = parallel_model(ab_out, pre_lm_out=True)
             scores_ba = parallel_model(ba_out, pre_lm_out=True)
-            scores_mean = (scores_ab + scores_ba) / 2
+            # scores_mean = (scores_ab + scores_ba) / 2
+            scores_mean = scores_ab
             batch_predictions = (scores_mean > 0.5).detach().cpu()
             predictions.append(batch_predictions)
 
@@ -326,10 +435,12 @@ def train_frozen(train_pairs,
             ab_out = lm_out_dict['ab'][batch_indices, :]
             ba_out = lm_out_dict['ba'][batch_indices, :]
             scores_ab = parallel_model(ab_out.to(device), pre_lm_out=True)
-            scores_ba = parallel_model(ba_out.to(device), pre_lm_out=True)
-            scores_mean = (scores_ab + scores_ba) / 2
+            # scores_ba = parallel_model(ba_out.to(device), pre_lm_out=True)
+            # scores_mean = (scores_ab + scores_ba) / 2
+            scores_mean = scores_ab
             batch_labels = train_labels[batch_indices].to(device)
-            loss = bce_loss(torch.squeeze(scores_mean), batch_labels) + mse_loss(scores_ab, scores_ba)
+            loss = bce_loss(torch.squeeze(scores_mean), batch_labels)
+                   # + mse_loss(scores_ab, scores_ba)
             loss.backward()
             optimizer.step()
             iteration_loss += loss.item()
@@ -375,7 +486,7 @@ def train(train_pairs,
           lr_lm=0.00001,
           lr_class=0.001):
     bce_loss = torch.nn.BCELoss()
-    mse_loss = torch.nn.MSELoss()
+    # mse_loss = torch.nn.MSELoss()
 
     optimizer = torch.optim.AdamW([
         {'params': parallel_model.module.model.parameters(), 'lr': lr_lm},
@@ -411,7 +522,7 @@ def train(train_pairs,
 
             scores_mean = (scores_ab + scores_ba) / 2
 
-            loss = bce_loss(scores_mean, batch_labels) + mse_loss(scores_ab, scores_ba)
+            loss = bce_loss(scores_mean, batch_labels)
 
             loss.backward()
 
@@ -474,7 +585,7 @@ def predict_trained_model(model_name, linear_weights_path, test_set_path, workin
     tokenizer = parallel_model.module.tokenizer
     # prepare data
 
-    test_ab, test_ba = tokenize(tokenizer, test_pairs, mention_map, parallel_model.module.end_id)
+    test_ab, test_ba = tokenize(tokenizer, test_pairs, ecb_mention_map, parallel_model.module.end_id)
 
     predictions = predict(parallel_model, device, test_ab, test_ba, batch_size=128)
     print("Test accuracy:", accuracy(predictions, test_labels))
@@ -483,22 +594,164 @@ def predict_trained_model(model_name, linear_weights_path, test_set_path, workin
     print("Test f1:", f1_score(predictions, test_labels))
 
 
-if __name__ == '__main__':
+def create_train_triplets(train_pairs, train_labels):
+    train_pairs_labels = [(a, b, l) for (a, b), l in zip(train_pairs, train_labels)]
+    pos_train_pairs_labels = [pl for pl in train_pairs_labels if pl[-1] == 1]
+    neg_train_pairs_labels = [pl for pl in train_pairs_labels if pl[-1] == 0]
 
-    triv_train_path = parent_path + '/parsing/ecb/trivial_non_trivial_train.csv'
-    triv_dev_path = parent_path + '/parsing/ecb/trivial_non_trivial_dev.csv'
+    # a: anchor, b: positive sample, c: negative sample
+    abc_triplets = []
 
-    train_pairs, train_labels = zip(*load_easy_hard_data(triv_train_path))
-    dev_pairs, dev_labels = zip(*load_easy_hard_data(triv_dev_path))
+    from collections import defaultdict
+    a2c_pls = defaultdict(list)
+    for pl in neg_train_pairs_labels:
+        a2c_pls[pl[0]].append(pl)
+
+    for a, b, _ in pos_train_pairs_labels:
+        ac_pls = a2c_pls[a]
+        for _, c, _ in ac_pls:
+            abc_triplets.append((a, b, c))
+
+    return abc_triplets
+
+
+def predict_triplet(parallel_model, dev_aa, dev_ab, batch_size, threshold=0.9):
+    n = dev_ab['input_ids'].shape[0]
+    indices = list(range(n))
+    predictions = []
+    new_batch_size = batching(n, batch_size, len(device_ids))
+    batch_size = new_batch_size
+    cosine_sim = nn.CosineSimilarity(dim=1, eps=1e-6)
+    with torch.no_grad():
+        for i in tqdm(range(0, n, batch_size), desc='Predicting'):
+            batch_indices = indices[i: i + batch_size]
+
+            anchor = forward_ab(parallel_model, dev_aa, device, batch_indices)
+            mention_b = forward_ab(parallel_model, dev_ab, device, batch_indices)
+            scores_mean = cosine_sim(anchor, mention_b)
+            batch_predictions = (scores_mean > threshold).detach().cpu()
+            predictions.append(batch_predictions)
+    return torch.cat(predictions)
+
+
+def train_triplet_loss(train_triplets, dev_pairs, dev_labels, mention_map, working_folder,
+                       batch_size=32,
+                       n_iters=10,
+                       lr_lm=0.00001, lr_class=0.0001):
+
+    model_name = 'bert-large-cased'
+    scorer_module = CrossEncoderTriplet(is_training=True, model_name=model_name).to(device)
+
+    # device_ids = list(range(1))
+
+    parallel_model = torch.nn.DataParallel(scorer_module, device_ids=device_ids)
+    parallel_model.module.to(device)
+
+    triplet_loss = nn.TripletMarginWithDistanceLoss(
+                    margin=1.0,
+                    distance_function=lambda x, y: 1.0 - nn.functional.cosine_similarity(x, y))
+
+    optimizer = torch.optim.AdamW([
+        {'params': parallel_model.module.model.parameters(), 'lr': lr_lm},
+        {'params': parallel_model.module.linear.parameters(), 'lr': lr_class}
+    ])
+
+    tokenizer = parallel_model.module.tokenizer
+
+    # prepare data
+    train_aa, train_ab, train_ac = tokenize_triplets(tokenizer, train_triplets, mention_map, parallel_model.module.end_id)
+
+    # make dev pairs look like triples for evaluating
+    dev_triplets = [(a, b, b) for a, b in dev_pairs]
+    dev_aa, dev_ab, _ = tokenize_triplets(tokenizer, dev_triplets, mention_map, parallel_model.module.end_id)
+
+    dev_labels = torch.LongTensor(dev_labels)
+
+    for n in range(n_iters):
+        train_indices = list(range(len(train_triplets)))
+        random.shuffle(train_indices)
+        iteration_loss = 0.
+        new_batch_size = batching(len(train_indices), batch_size, len(device_ids))
+        for i in tqdm(range(0, len(train_indices), new_batch_size), desc='Training'):
+            optimizer.zero_grad()
+            batch_indices = train_indices[i: i + new_batch_size]
+            anchor = forward_ab(parallel_model, train_aa, device, batch_indices)
+            positive = forward_ab(parallel_model, train_ab, device, batch_indices)
+            negative = forward_ab(parallel_model, train_ac, device, batch_indices)
+            loss = triplet_loss(anchor, positive, negative)
+            loss.backward()
+            optimizer.step()
+            iteration_loss += loss.item()
+        print(f'Iteration {n} Loss:', iteration_loss / len(train_indices))
+        # iteration accuracy
+        dev_predictions = predict_triplet(parallel_model, dev_aa, dev_ab, batch_size)
+        dev_predictions = torch.squeeze(dev_predictions)
+
+        print("dev accuracy:", accuracy(dev_predictions, dev_labels))
+        print("dev precision:", precision(dev_predictions, dev_labels))
+        print("dev f1:", f1_score(dev_predictions, dev_labels))
+
+        scorer_folder = working_folder + f'/scorer/chk_{n}'
+        if not os.path.exists(scorer_folder):
+            os.makedirs(scorer_folder)
+        model_path = scorer_folder + '/linear_neg .chkpt'
+        torch.save(parallel_model.module.linear.state_dict(), model_path)
+        parallel_model.module.model.save_pretrained(scorer_folder + '/bert_neg')
+        parallel_model.module.tokenizer.save_pretrained(scorer_folder + '/bert_neg')
+
+
+def train_ce_neg():
+    tn_fn_train_path = parent_path + '/parsing/ecb/lemma_balanced_tn_fn_train.tsv'
+    tn_fn_dev_path = parent_path + '/parsing/ecb/lemma_balanced_tn_fn_dev.tsv'
+
+    train_pairs, train_labels = zip(*load_lemma_dataset(tn_fn_train_path))
+    dev_pairs, dev_labels = zip(*load_lemma_dataset(tn_fn_dev_path))
+
+    train_triplets = create_train_triplets(train_pairs, train_labels)
+
+    working_folder = parent_path + "/parsing/ecb"
+
+    # edit this or not!
+    ann_dir = "/Users/rehan/workspace/data/ECB+_LREC2014"
+
+    # read annotations
+    ecb_mention_map_path = working_folder + '/mention_map.pkl'
+    if not os.path.exists(ecb_mention_map_path):
+        parse_annotations(ann_dir, working_folder)
+    ecb_mention_map = pickle.load(open(ecb_mention_map_path, 'rb'))
+    for key, val in ecb_mention_map.items():
+        val['mention_id'] = key
+
+    dev_triplets = create_train_triplets(dev_pairs, dev_labels)
+
+    dev_pairs_bal = []
+    dev_labels_bal = []
+
+    pos_pairs_set = set()
+
+    for a, b, c in dev_triplets:
+        if (a, b) not in pos_pairs_set:
+            dev_pairs_bal.append((a, b))
+            dev_labels_bal.append(1)
+            dev_pairs_bal.append((a, c))
+            dev_labels_bal.append(0)
+            pos_pairs_set.add((a, b))
+
+    train_triplet_loss(train_triplets, dev_pairs_bal, dev_labels_bal, ecb_mention_map, working_folder)
+
+
+def train_ce_pos():
+    triv_train_path = parent_path + '/parsing/ecb/lemma_balanced_tp_fp_train.tsv'
+    triv_dev_path = parent_path + '/parsing/ecb/lemma_balanced_tp_fp_dev.tsv'
+
+    train_pairs, train_labels = zip(*load_lemma_dataset(triv_train_path))
+    dev_pairs, dev_labels = zip(*load_lemma_dataset(triv_dev_path))
 
     train_pairs = list(train_pairs)
     train_labels = list(train_labels)
 
-    device = torch.device('cuda:0')
-    model_name = 'allenai/longformer-base-4096'
-    scorer_module = LongFormerCrossEncoder(is_training=True, model_name=model_name).to(device)
-
-    device_ids = list(range(1))
+    model_name = 'bert-large-cased'
+    scorer_module = LongFormerCrossEncoder(is_training=False, model_name=model_name).to(device)
 
     parallel_model = torch.nn.DataParallel(scorer_module, device_ids=device_ids)
     parallel_model.module.to(device)
@@ -516,13 +769,30 @@ if __name__ == '__main__':
     for key, val in ecb_mention_map.items():
         val['mention_id'] = key
 
-    train(train_pairs,
-          train_labels,
-          dev_pairs,
-          dev_labels,
-          parallel_model,
-          ecb_mention_map,
-          working_folder,
-          device, batch_size=2, lr_class=0.0001, lr_lm=0.000001,
-          # force_lm_output=False,
-          n_iters=100)
+    # train(train_pairs,
+    #       train_labels,
+    #       dev_pairs,
+    #       dev_labels,
+    #       parallel_model,
+    #       ecb_mention_map,
+    #       working_folder,
+    #       device, batch_size=2, lr_class=0.0001, lr_lm=0.000001,
+    #       # force_lm_output=False,
+    #       n_iters=100)
+    train_frozen(train_pairs,
+                 train_labels,
+                 dev_pairs,
+                 dev_labels,
+                 parallel_model,
+                 ecb_mention_map,
+                 working_folder,
+                 device, batch_size=128, lr_class=0.001,
+                 force_lm_output=False,
+                 n_iters=100)
+
+
+if __name__ == '__main__':
+    device = torch.device('cuda:0')
+    device_ids = list(range(1))
+    train_ce_neg()
+

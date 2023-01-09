@@ -16,6 +16,8 @@ import numpy as np
 from coreference.incremental_clustering import incremental_clustering
 from sklearn.cluster import AgglomerativeClustering
 from nltk.corpus import wordnet as wn
+from tqdm import tqdm
+from scipy.spatial.distance import cosine
 
 
 def get_cosine_similarities(mention_pairs, vector_map):
@@ -98,7 +100,7 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
     doc2id = {doc: i for i, doc in enumerate(doc_ids)}
 
     # generate similarity using the mention text
-    for pair in mention_pairs:
+    for pair in tqdm(mention_pairs, desc='Generating Similarities'):
         men1, men2 = pair
         men_map1 = mention_map[men1]
         men_map2 = mention_map[men2]
@@ -107,14 +109,18 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
 
         def jc(arr1, arr2):
             return len(set.intersection(arr1, arr2))/len(set.union(arr1, arr2))
+            # return len(set.intersection(arr1, arr2))
 
         doc_id1 = men_map1['doc_id']
         sent_id1 = int(men_map1['sentence_id'])
         all_sent_ids1 = {str(sent_id1 - 1), str(sent_id1), str(sent_id1 + 1)}
+        all_sent_ids1 = {str(sent_id1)}
 
         doc_id2 = men_map2['doc_id']
         sent_id2 = int(men_map2['sentence_id'])
         all_sent_ids2 = {str(sent_id2 - 1), str(sent_id2), str(sent_id2 + 1)}
+
+        all_sent_ids2 = {str(sent_id2)}
 
         sentence_tokens1 = [tok for sent_id in all_sent_ids1 if sent_id in doc_sent_map[doc_id1]
                             for tok in doc_sent_map[doc_id1][sent_id]['sentence_tokens']]
@@ -125,14 +131,26 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
         sent_sim = jc(set(sentence_tokens1), set(sentence_tokens2))
         # sent_sim = jc(set(men_map1['sentence_tokens']), set(men_map2['sentence_tokens']))
         # doc_sim = doc_sims[doc2id[men_map1['doc_id']], doc2id[men_map2['doc_id']]]
-        lemma_sim = float(men_map1['lemma'] in men_text2 or men_map2['lemma'] in men_text1)
+        lemma_sim = float(men_map1['lemma'].lower() in men_text2 or men_map2['lemma'].lower() in men_text1
+                          or men_map1['lemma'].lower() in men_map2['lemma'].lower()
+                          )
+
+        lemma1 = men_map1['lemma'].lower()
+        lemma2 = men_map2['lemma'].lower()
+        if lemma1 > lemma2:
+            pair_tuple = (lemma1, lemma2)
+        else:
+            pair_tuple = (lemma2, lemma1)
+
+        similarities.append((lemma_sim or pair_tuple in relations) and sent_sim > 0.05)
+
 
         def are_synonyms(word1, word2):
             word1_lemmas = set([lem for syn in wn.synsets(word1) for lem in syn.lemma_names()])
             word2_lemmas = set([lem for syn in wn.synsets(word2) for lem in syn.lemma_names()])
             return len(word1_lemmas.intersection(word2_lemmas)) > 0
 
-        check_syn = are_synonyms(men_map1['lemma'].lower(), men_map2['lemma'].lower())
+        # check_syn =  are_synonyms(men_map1['lemma'].lower(), men_map2['lemma'].lower())
 
         def are_derivationally_same(word1, word2):
             word1_lemmas = [lem for syn in wn.synsets(word1) for lem in syn.lemmas()]
@@ -148,11 +166,32 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
 
         # check_deriv = are_derivationally_same(men_map1['lemma'].lower(), men_map2['lemma'].lower())
 
+        def are_common_frames(word1, word2):
+            word1_frames = [f.name for f in fn.frames_by_lemma(word1)]
+            word2_frames = [f.name for f in fn.frames_by_lemma(word2)]
+            return len(set(word1_frames).intersection(word2_frames)) > 0
+
+        # fn_check_frames = len(set(men_map1['frames']).intersection(men_map2['frames'])) > 0
+
         same_doc = float(men_map1['doc_id'] == men_map2['doc_id'])
+
+        # e1_vector = men_map1['lemma_vector']
+        # e2_vector = men_map2['lemma_vector']
+        # lemma_vec_sim = 1 - cosine(e1_vector, e2_vector)
 
         # similarities.append(sent_sim + doc_sim + lemma_sim)
         # similarities.append((lemma_sim + 0.3*sent_sim)/2)
-        similarities.append((lemma_sim or check_syn) and (sent_sim > 0.14))
+        # similarities.append((lemma_sim and sent_sim > 0.1
+        #                      or (( check_syn) and sent_sim > 0.3 and not same_doc)
+        #                     )
+        #                     # and men_map1['gold_cluster'] == men_map2['gold_cluster']
+        #                     )
+
+        #
+        # similarities.append(
+        #     lemma_vec_sim > 0.3 and sent_sim > 0.15 and not same_doc
+        # )
+
         # similarities.append((lemma_sim + 0.3*sent_sim)/2)
         within_doc_similarities.append(same_doc)
 

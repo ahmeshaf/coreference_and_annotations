@@ -117,6 +117,19 @@ class LongFormerCrossEncoder(nn.Module):
         return self.linear(lm_output)
 
 
+class CrossEncoderTriplet(LongFormerCrossEncoder):
+    def __int__(self, is_training=True, long=True, model_name='allenai/longformer-base-4096',
+                linear_weights=None):
+        super(CrossEncoderTriplet).__int__(is_training, long, model_name, linear_weights)
+
+    def forward(self, input_ids, attention_mask=None, position_ids=None,
+                global_attention_mask=None, arg1=None, arg2=None, lm_only=False, pre_lm_out=False):
+        cls, e1, e2 = self.generate_cls_arg_vectors(input_ids, attention_mask, position_ids,
+                                                    global_attention_mask, arg1, arg2)
+
+        return torch.cat([cls, e2], dim=1)
+
+
 class FullCrossEncoder(nn.Module):
     def __init__(self, config, is_training=True, long=False):
         super(FullCrossEncoder, self).__init__()
