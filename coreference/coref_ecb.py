@@ -2,7 +2,7 @@ from coref import coreference
 from parsing.parse_ecb import parse_annotations
 import pickle
 import os
-
+import torch
 
 def run_coreference(ann_dir, working_folder, men_type='evt', split='dev',
                     algo='cc', sim='lemma', simulation=False, threshold=0.6):
@@ -39,7 +39,7 @@ def run_coreference(ann_dir, working_folder, men_type='evt', split='dev',
         print(simulation_metrics)
 
 
-def _generate_simulation_results_plot(men_type='evt', split='dev'):
+def _generate_simulation_results_plot(men_type='evt', split='test'):
     ann_dir = "/Users/rehan/workspace/data/ECB+_LREC2014"
     working_folder = "../parsing/ecb"
     # read annotations
@@ -59,14 +59,18 @@ def _generate_simulation_results_plot(men_type='evt', split='dev'):
         coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type,
                     cluster_algo='inc', threshold=0.4, simulation=simulation, top_n=3)
     else:
-        top_ns = [3, 5, 10, 20]
+        top_ns = [ 1, 2, 3, 5, 10, 20]
 
         simulation_metrics_n = []
-
+        sim_file = '../ecb_cdlm_scores/test_scores_all_pairs.pkl'
+        similarities = torch.stack(pickle.load(open(sim_file, 'rb')))
+        # similarities = torch.sigmoid(similarities)
         for n in top_ns:
-            simulation_metrics = coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type,
-                                             cluster_algo='inc', threshold=0.1, simulation=True, top_n=n)
-            simulation_metrics_n.append(simulation_metrics)
+            # similarities = torch.sigmoid(similarities)
+            sim_cls = coreference(curr_mention_map, ecb_mention_map, working_folder, men_type=men_type,
+                                             cluster_algo='inc', threshold=-1, simulation=True, top_n=n,
+                                  sims=similarities, sim_type='sim_file')
+            simulation_metrics_n.append(sim_cls.get_simulation_metrics())
 
         comparisons_plot(zip(top_ns, simulation_metrics_n))
 
@@ -86,7 +90,7 @@ def comparisons_plot(results):
 def run_coref():
     ann_dir = "/Users/rehan/workspace/data/ECB+_LREC2014"
     working_folder = "../parsing/ecb"
-    split = 'train'
+    split = 'test'
     men_type = 'evt'
     clus_algo = 'cc'
     similarity = 'lemma'
@@ -94,5 +98,5 @@ def run_coref():
     run_coreference(ann_dir, working_folder, men_type, split, clus_algo, similarity, threshold=thres)
 
 
-# _generate_simulation_results_plot()
-run_coref()
+_generate_simulation_results_plot()
+# run_coref()

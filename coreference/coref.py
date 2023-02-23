@@ -18,7 +18,7 @@ from sklearn.cluster import AgglomerativeClustering
 from nltk.corpus import wordnet as wn
 from tqdm import tqdm
 from scipy.spatial.distance import cosine
-
+import torch
 
 def get_cosine_similarities(mention_pairs, vector_map):
     """
@@ -112,21 +112,25 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
             # return len(set.intersection(arr1, arr2))
 
         doc_id1 = men_map1['doc_id']
-        sent_id1 = int(men_map1['sentence_id'])
-        all_sent_ids1 = {str(sent_id1 - 1), str(sent_id1), str(sent_id1 + 1)}
-        all_sent_ids1 = {str(sent_id1)}
+        # sent_id1 = int(men_map1['sentence_id'])
+        # all_sent_ids1 = {str(sent_id1 - 1), str(sent_id1), str(sent_id1 + 1)}
+        # all_sent_ids1 = {str(sent_id1)}
+        #
+        # doc_id2 = men_map2['doc_id']
+        # sent_id2 = int(men_map2['sentence_id'])
+        # all_sent_ids2 = {str(sent_id2 - 1), str(sent_id2), str(sent_id2 + 1)}
+        #
+        # all_sent_ids2 = {str(sent_id2)}
 
-        doc_id2 = men_map2['doc_id']
-        sent_id2 = int(men_map2['sentence_id'])
-        all_sent_ids2 = {str(sent_id2 - 1), str(sent_id2), str(sent_id2 + 1)}
+        # sentence_tokens1 = [tok for sent_id in all_sent_ids1 if sent_id in doc_sent_map[doc_id1]
+        #                     for tok in doc_sent_map[doc_id1][sent_id]['sentence_tokens']]
+        #
+        # sentence_tokens2 = [tok for sent_id in all_sent_ids2 if sent_id in doc_sent_map[doc_id2]
+        #                     for tok in doc_sent_map[doc_id2][sent_id]['sentence_tokens']]
 
-        all_sent_ids2 = {str(sent_id2)}
+        sentence_tokens1 = [tok for tok in men_map1['sentence_tokens']]
 
-        sentence_tokens1 = [tok for sent_id in all_sent_ids1 if sent_id in doc_sent_map[doc_id1]
-                            for tok in doc_sent_map[doc_id1][sent_id]['sentence_tokens']]
-
-        sentence_tokens2 = [tok for sent_id in all_sent_ids2 if sent_id in doc_sent_map[doc_id2]
-                            for tok in doc_sent_map[doc_id2][sent_id]['sentence_tokens']]
+        sentence_tokens2 = [tok for tok in men_map2['sentence_tokens']]
 
         sent_sim = jc(set(sentence_tokens1), set(sentence_tokens2))
         # sent_sim = jc(set(men_map1['sentence_tokens']), set(men_map2['sentence_tokens']))
@@ -142,7 +146,10 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
         else:
             pair_tuple = (lemma2, lemma1)
 
+        # similarities.append((lemma_sim or pair_tuple in relations))
         similarities.append((lemma_sim or pair_tuple in relations) and sent_sim > 0.05)
+        # similarities.append((lemma_sim) and sent_sim > 0.05)
+        # similarities.append((lemma_sim + 0.3*sent_sim)/2)
 
 
         def are_synonyms(word1, word2):
@@ -262,7 +269,7 @@ def cluster_cc(affinity_matrix, threshold=0.8):
 def coreference(curr_mention_map, all_mention_map, working_folder,
                 men_type='evt', relations=None, sim_type='lemma',
                 cluster_algo='cc', threshold=0.8, simulation=False,
-                top_n=3):
+                top_n=3, sims=None):
     """
 
     Parameters
@@ -299,7 +306,7 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
     # generate mention-pairs
     mention_pairs = []
     for mentions in topic_mention_dict.values():
-        list_mentions = list(mentions)
+        list_mentions = sorted(mentions)
         for i in range(len(list_mentions)):
             for j in range(i + 1):
                 if i != j:
@@ -310,7 +317,10 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
         similarities = get_mention_pair_similarity_lemma(mention_pairs, all_mention_map, relations, working_folder)
     elif sim_type == 'cdlm':
         similarities = get_mention_pair_similarity_cdlm_bi(mention_pairs, all_mention_map, relations, working_folder)
-
+    elif sim_type == 'sim_file':
+        similarities = sims
+        same_doc_ps = [i for i, p in enumerate(mention_pairs) if curr_mention_map[p[0]]['doc_id'] == curr_mention_map[p[1]]['doc_id']]
+        similarities[same_doc_ps] = -2
     # get indices
     mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
     rows, cols = zip(*mention_ind_pairs)

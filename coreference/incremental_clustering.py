@@ -32,6 +32,9 @@ class Cluster:
         self.mention_dicts.extend(cluster.mention_dicts)
         self.doc_ids.update(cluster.doc_ids)
 
+    def same_doc(self, mention_dict):
+        return mention_dict['doc_id'] in self.doc_ids
+
     def __hash__(self):
         return hash(self.id_)
 
@@ -168,7 +171,7 @@ class Clustering:
                             for clus in cluster_candidates]
 
             # zip candidate cluster with the similarity value
-            zipped_clusters = zip(cluster_candidates, best_match_mentions, similarities)
+            zipped_clusters = list(zip(cluster_candidates, best_match_mentions, similarities))
 
             # sort clusters based on similarity
             sorted_clusters = sorted(zipped_clusters, key=lambda x: -x[-1])
@@ -176,13 +179,15 @@ class Clustering:
             # ignore sorting by scores - case when we want to test fully manual
             # random simulation
             if random_run:
-                sorted_clusters = zipped_clusters
+                sorted_clusters = list(zipped_clusters)
 
             # pick top-n clusters
             # sorted_clusters = sorted_clusters
 
             # variable to know if the mention was merged /w existing cluster
             is_merged = False
+
+            sorted_clusters = [clus for clus in sorted_clusters if clus[-1] != -2]
 
             # pick the clusters after pruning based on threshold and top-n
             pruned_clusters = [clus for clus in sorted_clusters[:top_n] if clus[-1] > threshold]
@@ -224,7 +229,12 @@ class Clustering:
 
             # iterate through the candidates, merge and break if suitable cluster is found
             for i, (clus, max_mention, sim) in enumerate(pruned_clusters):
-                self.comparisons += 1
+                if not clus.same_doc(mention_dict):
+                    self.comparisons += 1
+                else:
+                    # print('same_doc')
+                    self.comparisons += 1
+                    pass
                 # merge if 1. running simulation and gold cluster matches
                 #       or 2. not running simulation and similarity is above threshold
                 if (simulation and clus.gold_cluster == str(mention_dict['gold_cluster'])) or \
