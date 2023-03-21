@@ -147,10 +147,13 @@ def get_mention_pair_similarity_lemma(mention_pairs, mention_map, relations, wor
             pair_tuple = (lemma2, lemma1)
 
         # similarities.append((lemma_sim or pair_tuple in relations))
-        similarities.append((lemma_sim or pair_tuple in relations) and sent_sim > 0.05)
+        if relations is not None:
+            similarities.append((lemma_sim or pair_tuple in relations) and sent_sim > 0.05)
+        else:
+            similarities.append((lemma_sim + 0.3 * sent_sim) / 2)
+            # similarities.append(lemma_sim and sent_sim > 0.05)
         # similarities.append((lemma_sim) and sent_sim > 0.05)
         # similarities.append((lemma_sim + 0.3*sent_sim)/2)
-
 
         def are_synonyms(word1, word2):
             word1_lemmas = set([lem for syn in wn.synsets(word1) for lem in syn.lemma_names()])
@@ -269,7 +272,7 @@ def cluster_cc(affinity_matrix, threshold=0.8):
 def coreference(curr_mention_map, all_mention_map, working_folder,
                 men_type='evt', relations=None, sim_type='lemma',
                 cluster_algo='cc', threshold=0.8, simulation=False,
-                top_n=3, sims=None):
+                top_n=3, sims=None, rand_run=False, men_pairs=None):
     """
 
     Parameters
@@ -319,8 +322,10 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
         similarities = get_mention_pair_similarity_cdlm_bi(mention_pairs, all_mention_map, relations, working_folder)
     elif sim_type == 'sim_file':
         similarities = sims
-        same_doc_ps = [i for i, p in enumerate(mention_pairs) if curr_mention_map[p[0]]['doc_id'] == curr_mention_map[p[1]]['doc_id']]
-        similarities[same_doc_ps] = -2
+        if men_pairs:
+            mention_pairs = men_pairs
+        # same_doc_ps = [i for i, p in enumerate(mention_pairs) if curr_mention_map[p[0]]['doc_id'] == curr_mention_map[p[1]]['doc_id']]
+        # similarities[same_doc_ps] = -2
     # get indices
     mention_ind_pairs = [(curr_men_to_ind[mp[0]], curr_men_to_ind[mp[1]]) for mp in mention_pairs]
     rows, cols = zip(*mention_ind_pairs)
@@ -329,7 +334,7 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
     n = len(curr_mentions)
     similarity_matrix = np.identity(n)
     similarity_matrix[rows, cols] = similarities
-
+    similarity_matrix[cols, rows] = similarities
     # clustering algorithm and mention cluster map
     if cluster_algo == 'cc':
         clusters, labels = cluster_cc(similarity_matrix, threshold)
@@ -344,7 +349,7 @@ def coreference(curr_mention_map, all_mention_map, working_folder,
             clusters, labels, inc_clusterer = incremental_clustering(similarity_matrix, threshold,
                                                                           curr_mentions, all_mention_map,
                                                                           curr_men_to_ind, simulation=simulation,
-                                                                          top_n=top_n)
+                                                                          top_n=top_n, random_run=rand_run)
     else:
         raise AssertionError
     system_mention_cluster_map = [(men, clus) for men, clus in zip(curr_mentions, labels)]

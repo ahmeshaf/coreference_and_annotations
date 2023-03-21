@@ -113,7 +113,7 @@ class Clustering:
         for tok in sent_tokens:
             candidates.update(self.token2clusters[tok])
 
-        return [cand for cand in self.clusters if cand.topic == topic]
+        return [cand for cand in candidates if cand.topic == topic]
 
     def nearest_neighbors(self, mention_dict, men2id, similarity_matrix, top_n=3):
         topic = mention_dict['topic']
@@ -160,6 +160,7 @@ class Clustering:
             target_mention = self.mentions.pop(0)
             mention_dict = mention_map[target_mention]
             cluster_candidates = self.candidates(mention_dict)
+            # cluster_candidates = [cand for cand in cluster_candidates if not cand.same_doc(mention_dict)]
 
             similarities = [
                 np.max([similarity_matrix[men2id[target_mention], men2id[m['mention_id']]] for m in clus.mention_dicts])
@@ -190,7 +191,13 @@ class Clustering:
             sorted_clusters = [clus for clus in sorted_clusters if clus[-1] != -2]
 
             # pick the clusters after pruning based on threshold and top-n
-            pruned_clusters = [clus for clus in sorted_clusters[:top_n] if clus[-1] > threshold]
+            # flip coin if a fractional top-n, and add another candidate based on the fraction probability
+            def flip(p):
+                return 1 if random.random() < p else 0
+            floor_top_n = int(top_n)
+            fraction_prob = top_n - floor_top_n
+            prob_top_n = floor_top_n + flip(fraction_prob)
+            pruned_clusters = [clus for clus in sorted_clusters[:prob_top_n] if clus[-1] > threshold]
 
             # simulation based results: comparisons, precision, recall
             if simulation:
@@ -268,10 +275,11 @@ class Clustering:
         return self.simulation_recall_func(), self.simulation_precision(), self.simulation_comparisons()
 
 
-def incremental_clustering(similarity_matrix, threshold, mentions, mention_map, men2id, top_n=10, simulation=False):
+def incremental_clustering(similarity_matrix, threshold, mentions, mention_map, men2id, top_n=10, random_run=False, simulation=False):
     clustering = Clustering(mentions)
     clusters, mention_clus_map = clustering.run_clustering(mention_map, men2id, similarity_matrix,
-                                                           threshold=threshold, top_n=top_n, simulation=simulation)
+                                                           threshold=threshold, top_n=top_n, simulation=simulation,
+                                                           random_run=random_run)
     # order the labels according to the mentions
     labels = [mention_clus_map[men] for men in mentions]
 
